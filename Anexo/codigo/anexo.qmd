@@ -1,0 +1,2172 @@
+---
+title: "Anexo"
+author: "Vicente Muñoz, Raúl"
+lang: es
+format: 
+  html:
+    toc: true
+    embed-resources: true
+  pdf:
+    toc: true
+    include-in-header: 
+      text: |
+        \usepackage{fvextra}
+        \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}         
+    include-before-body:
+      text: |
+        \RecustomVerbatimEnvironment{verbatim}{Verbatim}{
+          showspaces = false,
+          showtabs = false,
+          breaksymbolleft={},
+          breaklines
+          % Note: setting commandchars=\\\{\} here will cause an error 
+        }                   
+    
+editor: source
+
+execute: 
+  warning: false   
+  error: true      
+  message: false   
+---
+
+### Carga de Datos
+
+Procedemos a cargar los datos del covid
+
+```{r}
+url = "https://catalog.ourworldindata.org/garden/covid/latest/compact/compact.csv"
+download.file(url, destfile = "compact.csv", mode = "wb")
+df = read.csv("compact.csv", encoding = "UTF-8")
+```
+
+### Manipulación de los datos
+
+Como vamos a estudiar las tendencias por país, veamos cuáles son los países disponibles en los datos.
+
+```{r}
+unique_countries = unique(df$country)
+sort(unique_countries)[1:10]
+```
+
+En los datos se observan continentes, "países" raros y repeticiones (se incluye Inglaterra y Reino Unido). Por tanto vamos a quedarnos con los países que nos interesan en el estudio.
+
+```{r}
+library(dplyr)
+clean_countries = c(
+  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda",
+  "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan", "Bahamas",
+  "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin",
+  "Bhutan", "Bolivia", "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei",
+  "Bulgaria", "Burkina Faso", "Burundi", "Cambodia", "Cameroon", "Canada",
+  "Cape Verde", "Central African Republic", "Chad", "Chile", "China", "Colombia",
+  "Comoros", "Congo", "Costa Rica", "Cote d'Ivoire", "Croatia", "Cuba", "Cyprus",
+  "Czechia", "Democratic Republic of Congo", "Denmark", "Djibouti", "Dominica",
+  "Dominican Republic", "East Timor", "Ecuador", "Egypt", "El Salvador",
+  "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji",
+  "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece",
+  "Grenada", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti", "Honduras",
+  "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel",
+  "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kuwait",
+  "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya",
+  "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia",
+  "Maldives", "Mali", "Malta", "Marshall Islands", "Mauritania", "Mauritius",
+  "Mexico", "Micronesia (country)", "Moldova", "Monaco", "Mongolia", "Montenegro",
+  "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru", "Nepal", "Netherlands",
+  "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea", "North Macedonia",
+  "Norway", "Oman", "Pakistan", "Palau", "Palestine", "Panama", "Papua New Guinea",
+  "Paraguay", "Peru", "Philippines", "Poland", "Portugal","Puerto Rico", "Qatar", "Romania",
+  "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia",
+  "Saint Vincent and the Grenadines", "Samoa", "San Marino",
+  "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia", "Seychelles",
+  "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands",
+  "Somalia", "South Africa", "South Korea", "South Sudan", "Spain", "Sri Lanka",
+  "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan", "Tajikistan",
+  "Tanzania", "Thailand", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia",
+  "Turkey", "Turkmenistan", "Tuvalu", "Uganda", "Ukraine",
+  "United Arab Emirates", "United Kingdom", "United States", "Uruguay",
+  "Uzbekistan", "Vanuatu", "Vatican", "Venezuela", "Vietnam", "Yemen", "Zambia"
+)
+
+df= df %>% filter(country %in% clean_countries)
+```
+
+Una vez que tenemos datos de los países que nos interesan expliquemos qué vamos a analizar.
+
+En primer lugar, veremos países con tendencias similares en cuanto a nuevos casos por millón de habitantes. Por ello realizaremos clustering de series temporales usando el paquete dtwclust, que permite incluir distancias ideales para series temporales. Detalles de esta se pueden ver en la memoria.
+
+Se ha elegido esa variable pues es comparable entre países al tener en cuenta el tamaño de la población. Tras esto estudiaremos otras relaciones entre países, como aquellos con series de muertes por millón similares. Se incluirá una sección final en que se realizará cluster incluyendo las variables a la vez.
+
+Dicho esto preparemos los datos para los contagios por millón.
+
+Destacar que nos quedaremos con fechas hasta el 31 de diciembre de 2023, pues se ha visto que a partir de entonces el número de casos registrados es muy poco significativo. Además estudiaremos patrones por meses, ya que tomar datos diarios nos haría incluir demasiado ruido y aumentaría demasiado el tiempo de cómputo. Creemos una función para preprocesar las series como queremos.
+
+### Función de preprocesado
+
+```{r}
+library(rlang)
+library(lubridate)
+
+preparar_series_temporales = function(df, columna, fecha_limite = as.Date("2023-12-31")) {  
+  df = df %>% mutate( date = as.Date(date), year_month = floor_date(date, unit = "month") ) %>% filter(year_month <= fecha_limite)
+
+ # Convertir nombre de columna a símbolo 
+  columna_sym <- sym(columna)
+
+# Agregación mensual por país de aquellos países que hayan registrado contagios en al menos 3 meses de los 48 considerados
+  df_monthly = df %>% group_by(country, year_month) %>% summarise(valor = sum(!!columna_sym, na.rm = TRUE), .groups = "drop") %>% group_by(country) %>% filter(sum(valor > 0, na.rm = TRUE) > 3) %>% ungroup()
+
+# Crear lista de series temporales por país 
+  series_list = df_monthly %>% group_by(country) %>% arrange(year_month) %>% summarise(serie = list(valor), .groups = "drop") %>% pull(serie)
+
+  nombres = df_monthly %>% distinct(country) %>% pull(country)
+
+  names(series_list) = nombres 
+  return(series_list) }
+```
+
+## Países con trayectorias de contagios similares
+
+Realicemos un cluster de series temporales para la variable new_cases_per_million.
+
+```{r}
+serie_new_cases = preparar_series_temporales(df,"new_cases_per_million")
+```
+
+Veamos si son diferentes las longitudes de cada serie.
+
+```{r}
+unique(lengths(serie_new_cases))
+```
+
+Por tanto tenemos series de idéntica longitud.
+
+Realicemos un escalado para que las técnicas de cluster funcionen mejor.
+
+```{r}
+# Función para aplicar Z-score
+z_score = function(x) {
+  if (sd(x) == 0) return(rep(0, length(x)))  # evitar división por 0
+  (x - mean(x)) / sd(x)
+}
+
+# Aplicar a la serie
+serie_new_cases_z = lapply(serie_new_cases, z_score)
+```
+
+Construimos una distancia personalizada a raíz de DTW.
+
+```{r}
+library(dtwclust)
+ndtw = function(x, y, ...) {
+  dtw(x, y, ...,
+      step.pattern = asymmetric,
+      distance.only = TRUE)$normalizedDistance     
+}
+# Register the distance with proxy
+proxy::pr_DB$set_entry(FUN = ndtw, names = c("nDTW"),
+                       
+                       loop = TRUE, type = "metric", distance = TRUE,
+                       description = "Normalized, asymmetric DTW")
+```
+
+Se usa asymmetric por si un país tuvo una ola de contagios más temprana que otra. Buscamos patrones generales entre los países, es decir, países con una sola ola, países con una gran ola y rebrotes, etc.
+
+En este caso la normalización no es necesaria pues todas las longitudes son iguales, sin embargo no es mala práctica dejarla.
+
+Ahora pasemos a aplicar los diferentes tipos de cluster que se han estudiado en la memoria.
+
+### Partitional Clustering
+
+Probaremos con diferentes configuraciones de distancia y de centroides.
+
+#### Distancia nDTW
+
+##### Prototipo DBA
+
+En vez de la distancia DTW usaremos la versión asimétrica y normalizada que construimos. Como se describe en la memoria, el prototipo ideal cuando usamos DTW es DBA (DTW Barycenter Averaging). Para determinar el $k$ que usaremos nos basaremos en el índice CH. Como nuestra matriz de distancias es asimétrica no podemos fiarnos de índices como el Silhouette o el índice de Dunn. Además al usar DBA, el índice de Davies Bouldin también puede inducirnos error, por ello se ha elegido el índice CH para ayudarnos a determinar el $k$.
+
+```{r}
+# Definimos el rango de k a evaluar
+k_values = 2:6
+ch_scores = numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k = k_values[i]
+  cat("Evaluando k =", k, "...\n")
+  set.seed(42)
+  cl = tsclust(serie_new_cases_z, type = "partitional", k = k, distance = "ndtw", centroid = "dba", seed = 12345)
+
+  
+  resumen_metricas = cvi(cl,type="internal")
+  ch = resumen_metricas["CH"]
+  
+  # Promedio de los indice CH
+  ch_scores[i] = ch
+}
+
+# Graficar los resultados
+par(mfrow = c(1, 1))
+plot(k_values, ch_scores, type = "b", pch = 19, col = "blue",
+     xlab = "Número de clusters (k)", ylab = "Coeficiente CH",
+     main = "Selección de k usando índice CH con nDTW")
+```
+
+Vemos que el máximo se alcanza para $k=2$, veremos que aunque es verdad que separando en 2 cluster obtenemos grupos bien diferenciados, se puede hacer una división más fina con $k=3$, de modo que no saquemos patrones tan generales.
+
+
+###### Caso $k=2$
+
+Vamos a construir el cluster correspondiente. Recordemos que tomaremos la distancia ndtw definida y centroides por DBA.
+
+```{r}
+set.seed(42)
+cl_ndtw_dba_2 = tsclust(serie_new_cases_z, type = "partitional", k =2, distance = "ndtw", centroid = "dba",seed = 12345)
+cl_ndtw_dba_2
+plot(cl_ndtw_dba_2,type="centroids")
+```
+
+En los centroides vemos claramente el patrón genérico que se detecta.
+
+Un primer grupo está formado por países que han tenido un único pico importante de contagios que sobresale del resto, mientras que el segundo grupo está formado por países que pese a tener un gran pico importante, presentan numerosos repuntes. Construyamos funciones que nos permitirán ver esto que estamos diciendo ahora.
+
+```{r}
+visualizar_series_centroides = function(series, cl, k, ylab = "Valor",tamano_ventana=c(1,k)) {
+  par(mfrow = tamano_ventana, mar = c(6, 6, 2, 1), mgp = c(4, 1.5, 0))  
+  
+  fechas = seq(as.Date("2020-01-01"), as.Date("2023-12-01"), by = "month")
+  meses_anos = format(fechas, "%b-%Y")
+  
+  for (cluster_id in 1:k) {
+    series_cluster = series[cl@cluster == cluster_id]
+    series_cluster = lapply(series_cluster, as.numeric)
+    
+    matplot(do.call(cbind, series_cluster), type = "l",
+            lty = 1, col = rgb(0, 0, 1, 0.2),
+            main = paste("Cluster", cluster_id),
+            ylab = ylab,
+            xlab = "Tiempo",
+            xaxt = "n")
+    
+    axis(1, at = 1:length(fechas), labels = meses_anos,
+         las = 2, cex.axis = 0.7)
+    
+    lines(cl@centroids[[cluster_id]], col = "red", lwd = 2)
+    legend("topright", legend = "Centroide", col = "red", lwd = 2, bty = "n")
+  }
+}
+
+
+
+
+
+visualizar_series_centroides(serie_new_cases_z,cl_ndtw_dba_2,2,ylab = "Contagios por millón normalizados")
+```
+
+Pese a que parecen dos grupos bien definidos, se observa gran variabilidad en el segundo grupo. Esto es normal, pues realmente estamos hallando patrones bastante genéricos. Este análisis nos permite decir países que tuvieron una ola muy pronunciada sin repuntes demasiado altos o al menos comparado con ese gran repunte y países que tuvieron varios repuntes significativos además de esa gran ola. Visualicemos varios ejemplos
+
+```{r}
+library(ggplot2)
+library(tibble)
+library(purrr)
+library(scales)
+
+visualizar_ejemplos = function(series, cl, n_cluster, n_ejemplos, tamano_ventana,
+                               semilla = NULL, ylab = "Valor", n_breaks_y = 4) {
+  
+  if (!is.null(semilla)) set.seed(semilla)
+
+  ind_cluster <- sample(which(cl@cluster == n_cluster), n_ejemplos)
+  nombres <- names(series)
+  if (is.null(nombres)) nombres <- paste("Serie", seq_along(series))
+
+  fechas <- seq(as.Date("2020-01-01"), as.Date("2023-12-01"), by = "month")
+
+  datos <- map_df(ind_cluster, function(i) {
+    tibble(
+      Tiempo = fechas[seq_along(series[[i]])],
+      Valor = series[[i]],
+      Serie = nombres[i]
+    )
+  })
+
+  ggplot(datos, aes(x = Tiempo, y = Valor)) +
+    geom_line(color = "#0072B2", size = 1) +
+    facet_wrap(~ Serie, nrow = tamano_ventana[1],
+               ncol = tamano_ventana[2], scales = "free_y") +
+    labs(title = paste("Ejemplos del Cluster", n_cluster),
+         x = "Tiempo", y = ylab) +
+    scale_x_date(date_breaks = "6 months", date_labels = "%b-%Y") +
+    scale_y_continuous(
+      breaks = scales::breaks_pretty(n = n_breaks_y)  # máximo n_breaks_y etiquetas
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      strip.text = element_text(face = "bold", color = "#333333"),
+      plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+      axis.text.x = element_text(angle = 90, hjust = 1)
+    )
+}
+
+
+
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_2,1,9,c(3,3),2,ylab="Contagios por millón",2)
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_2,2,9,c(3,3),2,ylab="Contagios por millón",2)
+```
+
+En esta agrupación observamos una diferencia clara entre los dos clusters. En el Cluster 1, la mayoría de los países presentan un pico de contagios muy marcado y concentrado en el tiempo, lo que sugiere un brote intenso pero relativamente aislado. Aunque hay alguna excepción (como el tercer ejemplo), la mayoría de las series tienen una forma muy similar.
+
+En cambio, en el Cluster 2 predominan los países con varios repuntes a lo largo del tiempo. Aunque también pueden haber tenido un pico pronunciado, este no domina completamente la serie, permitiendo identificar fases posteriores de reactivación o nuevos brotes.
+
+En resumen, esta partición permite distinguir entre países que experimentaron una ola principal claramente definida y aquellos que sufrieron múltiples oleadas o una evolución epidémica más prolongada.
+
+Aunque con dos clusters hemos logrado distinguir claramente dos patrones de comportamiento epidémico, se observa que dentro del segundo grupo existe cierta heterogeneidad, lo que sugiere que podría beneficiarse de una segmentación más detallada.
+
+Por este motivo, vamos a explorar una partición en tres clusters, correspondiente al segundo valor de $k$ según la métrica evaluada. El objetivo es comprobar si esta opción permite generar grupos más homogéneos internamente y separados entre sí, lo que podría aportar una mejor interpretación epidemiológica de los patrones temporales. Además en este caso exploraremos otras distancias y experimentaremos con otros centroides para dar variedad al estudio.
+
+###### Caso $k=3$
+
+```{r}
+set.seed(42)
+cl_ndtw_dba_3 = tsclust(serie_new_cases_z, type = "partitional", k =3, distance = "ndtw", centroid = "dba",seed = 12345)
+cl_ndtw_dba_3
+plot(cl_ndtw_dba_3,type="centroids")
+```
+
+La segmentación en tres clusters parece haber permitido una mayor diferenciación entre los grupos, como se aprecia en el tamaño relativo de cada uno.
+
+Al analizar los centroides de cada grupo, observamos que ha emergido un nuevo patrón característico: un grupo de países que, además de haber experimentado un pico epidémico muy marcado, presentan posteriormente un repunte significativo.
+
+Este nuevo cluster complementa a los ya identificados en la partición anterior, ofreciendo una clasificación más rica y matizada. A continuación, visualizamos las series temporales correspondientes a cada grupo junto con sus centroides para examinar mejor estos patrones.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_ndtw_dba_3,3,ylab = "Contagios por millón normalizados")
+```
+
+Debemos tener en cuenta que la distancia empleada en el clustering busca capturar similitudes en la forma general de las series temporales, independientemente de su alineación exacta en el tiempo. Esto implica que dos series pueden considerarse similares aunque presenten sus picos o patrones en momentos distintos.
+
+Esta característica puede explicar por qué, a simple vista, el primer centroide no parece representar fielmente a su grupo. Es probable que, al visualizar ejemplos individuales, observemos que las series presentan formas similares al centroide, pero con desplazamientos temporales. Es decir, los brotes o subidas de casos se producen antes o después, pero con una evolución comparable.
+
+Por otro lado, el primer grupo revela un nuevo patrón característico como dijimos anteriormente: países que han experimentado un brote importante, sostenido en el tiempo, antes de descender. Esta persistencia del pico lo diferencia claramente de los otros clusters y justifica su separación como grupo independiente.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_3,1,9,c(3,3),42,ylab = "Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_3,2,9,c(3,3),42,ylab = "Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_3,3,9,c(3,3),42,ylab = "Contagios por millón")
+```
+
+Observamos exactamente lo anticipado: en los ejemplos pertenecientes al cluster 1, la mayoría de países presentan un descenso más progresivo de los contagios tras un primer pico pronunciado, e incluso muestran un rebrote posterior. Este comportamiento contrasta con el del cluster 3, donde predominan casos con un único gran pico de contagios, seguido de una estabilización sin rebrotes significativos (con la posible excepción de Brunei).
+
+En esta nueva segmentación, el cluster 2 resulta más homogéneo que el cluster con más observaciones que construimos antes. Agrupa principalmente países con un pico muy elevado y múltiples brotes en general. La única excepción notable es el Vaticano, cuya serie presenta un comportamiento atípico, aunque esperable dada su condición de país muy pequeño. Por tanto, su inclusión como outlier no compromete la coherencia del grupo.
+
+En conjunto, esta nueva partición ha permitido formar grupos más homogéneos internamente, manteniendo al mismo tiempo diferencias claras entre clusters. Antes de explorar otras configuraciones de clustering para $k=3$, analizaremos brevemente el caso de \$k=4\$, el cual presentaba un valor notablemente inferior del índice de Calinski-Harabasz. Esto sugiere que podría no ser una segmentación tan adecuada, por lo que quizás resulte razonable considerar $k=3$ en futuros cluster.
+
+###### Caso $k=4$
+
+```{r}
+set.seed(42)
+cl_ndtw_dba_4 = tsclust(serie_new_cases_z, type = "partitional", k =4, distance = "ndtw", centroid = "dba",seed = 12345)
+cl_ndtw_dba_4
+plot(cl_ndtw_dba_4,type="centroids")
+```
+
+Veamos si el tomar un grupo más nos permite obtener clusters mas homogéneos internamente manteniendo diferencias entre sí.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_ndtw_dba_4,4,ylab = "Contagios por millón normalizados",tamano_ventana = c(2,2))
+```
+
+En los centroides se observa una similitud entre el cluster 3 y 4. Tomemos algunos ejemplos y veamos si hay homogeneidad.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_4,1,9,c(3,3),42,ylab = "Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_4,2,9,c(3,3),42,ylab = "Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_4,3,9,c(3,3),42,ylab = "Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_ndtw_dba_4,4,9,c(3,3),42,ylab = "Contagios por millón")
+```
+
+Vemos que como hemos dicho anteriormente, no se aprecie una diferencia clara entre el cluster 3 y el cluster 4, ni si quiera en forma. Esto respalda que el coeficiente CH asociado a 4 cluster sea bastante más bajo que con $k=3$. Ahora pasaremos a ver los resultados con otras combinaciones estudiadas en la memoria para el caso $k=3$ que es el que puede resultar no trivial (comparando con $k=2$).
+
+##### Prototipo PAM
+
+```{r}
+set.seed(42)
+cl_ndtw_pam_3 = tsclust(serie_new_cases_z, type = "partitional", k =3, distance = "ndtw", centroid = "pam",seed = 12345)
+cl_ndtw_pam_3
+plot(cl_ndtw_pam_3,type="centroids")
+```
+
+En este caso observamos una diferencia considerable al comparar el uso de DBA como método de cálculo de centroides frente a simplemente seleccionar una serie representativa del grupo. DBA resulta mucho más adecuado cuando se utiliza una distancia basada en DTW, ya que permite generar un prototipo que refleja mejor el comportamiento promedio del grupo. En contraste, elegir una única serie como centroide puede resultar poco representativo, especialmente cuando existe alta variabilidad entre las series del grupo.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_ndtw_pam_3,3,ylab= "Contagios por millón normalizados")
+```
+
+El grupo 3 al igual que cuando usamos DBA parece estar bien representado, aunque surgen dudas sobre los dos primeros. Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_ndtw_pam_3,1,9,c(3,3),42,ylab= "Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_ndtw_pam_3,2,9,c(3,3),42,ylab= "Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_ndtw_pam_3,3,9,c(3,3),42,ylab= "Contagios por millón")
+```
+
+Parece que hemos obtenido clusters menos homogéneos que con el método DBA. Esto tiene sentido pues la eelcción de un buen prototipo es muy importante en los algoritmo particional por cóomo se construyen estos. Veamos si las métricas reflejan esto que decimos y observamos. Aún así se observa que la segmentación tiene sentido y de cierta manera es similar a la que obtuvimos con DBA, aunque menos refinada.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3,tipe="internal")
+cvi(cl_ndtw_pam_3,type="internal")
+```
+
+Observamos que, en la métrica principal de evaluación, el índice de Calinski-Harabasz (CH), la agrupación obtenida mediante DBA presenta un rendimiento superior respecto a la agrupación alternativa. También se aprecia una mejora en la métrica SF, lo cual refuerza las observaciones realizadas anteriormente.
+
+Por otro lado, vamos a comentar brevemente algunos índices cuya fiabilidad puede verse afectada por la asimetría de la función de distancias que consideramos. Aun así, métricas como DB y DB\*, que penalizan la dispersión interna de los clústeres, muestran valores significativamente más favorables para el agrupamiento con DBA. En cuanto al índice Silhouette, aunque su valor es levemente superior en el modelo alternativo, esta diferencia es pequeña y su interpretación debe tomarse con cautela debido a la asimetría mencionada.
+
+En conjunto, estos resultados sugieren que DBA produce una estructura de clústeres más coherente bajo la distancia nDTW. A continuación, exploraremos el comportamiento del modelo utilizando un tipo distinto de distancia y analizaremos los nuevos resultados obtenidos.
+
+#### Distancia Soft-DTW
+
+Usaremos ahora una versión diferenciable de DTW, la conocida SDTW.
+
+En cuanto al prototipo, usaremos los centroides que mejor se adaptan a la distancia considerada.
+
+```{r}
+set.seed(42)
+cl_sdtw_3 = tsclust(serie_new_cases_z, type = "partitional", k =3, distance = "sdtw", centroid = "sdtw_cent",seed = 12345)
+cl_sdtw_3
+plot(cl_sdtw_3,type="centroids")
+```
+
+Visualicemos los centroides junto a las series.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_sdtw_3,3,ylab="Contagios por millón normalizados")
+```
+
+Observamos que en este caso los centroides parecen tener sentido y de ehcho recuerdan bastante a los de la mejor agrupación de 3 hasta ahora. Obtenemos un primer grupo con una gran ola y algún repunte significativo tras la misma. En el segundo grupo vemos varios picos significativos y en el tercer grupo un gran pico simlemente. Apoyémonos en algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_sdtw_3,1,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_sdtw_3,2,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_sdtw_3,3,9,c(3,3),42,ylab="Contagios por millón")
+```
+
+En los ejemplos se observa que las diferencias entre el grupo 1 y el grupo 2 no es tan clara como pudiera parecer en los centroides. Al evaluar las métricas veremos si esa similitud visual hace que obtengamos coeficientes peores.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3,tipe="internal")
+cvi(cl_sdtw_3,type="internal")
+```
+
+Debido a que Soft-DTW no garantiza una distancia nula entre una serie y sí misma, algunas métricas , como Silhouette, Dunn y COP, pueden estar levemente distorsionadas, por lo que su interpretación debe hacerse con cautela en este contexto.
+
+Aunque Soft-DTW presenta un mejor índice Silhouette, el resto de las métricas internas de validación muestran un rendimiento claramente inferior en comparación con nDTW utilizando DBA. En particular, destaca una diferencia significativa en el índice de Calinski-Harabasz (CH), considerado una de las métricas más representativas en la evaluación de agrupamientos en estas circunstancias, lo cual refuerza la superioridad del enfoque basado en DBA.
+
+Además, resulta especialmente preocupante el valor extremadamente bajo del índice SF en el caso de Soft-DTW, lo que sugiere una separación muy débil entre los clústeres generados (como se puede visualizar en los ejemplos).
+
+Cabe señalar que algunas métricas, como Silhouette, Dunn y COP, pueden verse afectadas por la asimetría de la matriz de distancias, lo cual limita su fiabilidad en este contexto.
+
+En conjunto, estos resultados respaldan que la agrupación obtenida con nDTW y DBA genera una estructura de clústeres más coherente y mejor definida. 
+
+Probemos ahora con un cluster similar al particional, $k$-Shape Clustering.
+
+
+### $k$-Shape Clustering
+
+Este método se obtiene en dtwclust al usar la distancia Shape-Based (SBD) y el centroide shape extraction.
+
+```{r}
+set.seed(42)
+cl_sbd_3 = tsclust(serie_new_cases_z, type = "partitional", k =3, distance = "sbd", centroid = "shape",seed = 12345)
+cl_sbd_3
+plot(cl_sbd_3,type="centroids")
+```
+
+Cabe destacar la velocidad tan alta a la que se ha realizado la agrupación. Además los centroides vuelven a estar relacionados con nDTW usando DBA. Veamos las representaciones necesarias.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_sbd_3,3,ylab="Contagios por millón normalizados")
+```
+
+Corroboramos la información anterior, veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_sbd_3,1,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_sbd_3,2,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_sbd_3,3,9,c(3,3),42,ylab="Contagios por millón")
+```
+
+En los ejemplos se observa que pese a que en el grupo 2 parece haber más homogeneidad, no se observan patrones claros en los grupos 1 y 3 más halla de que tienen un gran pico. Veremos si en las métricas se refleja dicha similitud.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3,tipe="internal")
+cvi(cl_sbd_3,type="internal")
+```
+
+Efectivamente se observan mejores resultados en casi todos los coeficientes, destacando el más representativo en este caso, el índice de Calinski-Harabasz. En este métrica observamos que el CH obtenido con esta partición es aproximadamente la mitad que en el cluster con distancia nDTW y centroides hallados por DBA.
+
+Pasemos ahora a otro tipo de Clustering similar al particional, TADPole Clustering.
+
+### TADPole Clustering
+
+Detalles de cómo funciona este algoritmo se pueden consultar en la memoria. Debemos dar un valor de cutoff distance (dc) y un valor de ventana. El valor de dc se refiere a cuán cercano consideramos vecino entre series. Usaremos el percentil 20 de todas las distancias. TADPole usa internamente la distancia DTW.
+
+```{r}
+# Distancias DTW sobre nuestros datos normalizados
+dist_matrix_dtw = proxy::dist(serie_new_cases_z, method = "dtw_basic")
+# Cálculo del percentil para dc
+dc = quantile(dist_matrix_dtw, probs = 0.2)
+```
+
+En cuanto al valor ventana que tomaremos, este será en torno a un 20% de la longitud de nuestras series.
+
+```{r}
+window = floor(length(serie_new_cases_z[[1]])*20/100)
+window
+```
+
+Ahora estamos en condiciones de utilizar el método TADPole.
+
+```{r}
+set.seed(42)
+cl_tadpole_3 = tsclust(serie_new_cases_z, k = 3, type = "t", trace = TRUE,
+control = tadpole_control(dc = dc,window.size = window),seed = 12345)
+cl_tadpole_3
+plot(cl_sbd_3,type="centroids")
+```
+
+Nuevamente parece que hemos obtenido centroides con forma similar al mejor cluster hasta el momento. Representemos todas las series también.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_tadpole_3,3,ylab="Contagios por millón normalizados")
+```
+
+Posiblemente tengamos una gran variabilidad interna en el primer grupo al tener la mayor parte de la población. Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_tadpole_3,1,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_tadpole_3,2,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_tadpole_3,3,9,c(3,3),42,ylab="Contagios por millón")
+```
+
+Se observa una variabilidad interna clara en el primer grupo como era de esperar. En cuanto al segundo y tercer grupo, parecen muy similares al obtenido usando nDTW con DBA. Veamos en las métricas si se refleja esa variabilidad interna que se observa en los datos del cluster 1.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3,tipe="internal")
+cvi(cl_tadpole_3,type="internal")
+```
+
+Observando la métrica fiable, el índice CH y SF, vemos que es significativamente mejor en el cluster usando nDTW y DBA, es decir seguimos observando y comprobando con estos índices que el mejor clúster hasta el momento es el que obtuvimos con nDTW y DBA. Pasemos ahora con un enfoque distinto, Fuzzy Clustering.
+
+### Fuzzy Clustering
+
+#### Distancia nDTW
+
+Usaremos ahora el método Fuzzy para hacer clustering. Detalles de dicho método pueden consultarse en la memoria.
+
+```{r}
+set.seed(42)
+cl_fuzzy_ndtw_3 = tsclust(serie_new_cases_z, type = "fuzzy", k =3, distance = "ndtw", centroid = "fcmdd",seed = 12345)
+cl_fuzzy_ndtw_3
+table(cl_fuzzy_ndtw_3@cluster)
+plot(cl_fuzzy_ndtw_3,type="centroids")
+```
+
+En este caso como era de esperar por el tipo de algoritmo que es fuzzy obtenemos una probabilidad de pertenencia a cada cluster. En los centroides vemos cierta similitud entre el primer y tercer cluster. Veamos los gráficos con las series.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_fuzzy_ndtw_3,3,ylab="Contagios por millón normalizados")
+```
+
+Los gráficos nos muestran que parece que tenemos un agrupamiento bien separado. Un primer grupo que ademas del gran pico presenta pequeños rebrotes antes y/o después del mismo. Un segundo grupo con varios brotes y un tercer grupo con únicamente un gran pico de contagios. Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_fuzzy_ndtw_3,1,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_fuzzy_ndtw_3,2,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_fuzzy_ndtw_3,3,9,c(3,3),42,ylab="Contagios por millón")
+```
+
+En los ejemplos se puede observar que pese a la homogeneidad del cluster 2, el cluster 1 parece solaparse con el 3, por ello posiblemente en las métrcias importantes veremos que el cluster particional será mejor que este.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3,tipe="internal")
+cvi(cl_fuzzy_ndtw_3,type="internal")
+```
+
+Se han obtenido otras métricas, pero las métricas obtenidas para el cluster fuzzy son bastante bajas e indican bastante solapamiento. Hallemos manualmente de todas formas una métrica que sí nos sirva, el índice CH.
+
+```{r}
+library(clusterCrit)
+# Convertimos la lista de series en una matriz
+data_matrix = do.call(rbind, serie_new_cases_z)
+
+# Calculamos el índice Calinski-Harabasz
+ch_fuzzy_ndtw = intCriteria(as.matrix(data_matrix), cl_fuzzy_ndtw_3@cluster, "Calinski_Harabasz")
+ch_fuzzy_ndtw
+```
+
+Efectivamente obtenemos un valor mucho más bajo lo que refuerza la idea de que el cluster particional que obtuvimos es bastante mejor. Usemos ahora la distancia Global Alignment Kernel.
+
+#### Distancia Global Alignment Kernel
+
+```{r}
+set.seed(42)
+cl_fuzzy_gak_3 = tsclust(serie_new_cases_z, type = "fuzzy", k =3, distance = "gak", centroid = "fcmdd",seed = 12345)
+cl_fuzzy_gak_3
+table(cl_fuzzy_gak_3@cluster)
+plot(cl_fuzzy_gak_3,type="centroids")
+```
+
+Esta vez parece que hemos obtenido centroides más similares al de nuestro mejor cluster hasta el momento. representemos el resto de series también.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_fuzzy_gak_3,3,ylab="Contagios por millón normalizados")
+```
+
+En la gráfica también parece que los centroides son representativos. Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_fuzzy_gak_3,1,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_fuzzy_gak_3,2,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_fuzzy_gak_3,3,9,c(3,3),42,ylab="Contagios por millón")
+```
+
+Se observa cierta heterogeneidad en el grupo 3 y una diferencia no muy significativa en observaciones entre el cluster 1 y 3. Aún así los clusters parecen tener sentido. Usemos criterios más objetivos comolas métricas que miden la calidad del cluster.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3,tipe="internal")
+cvi(cl_fuzzy_gak_3,type="internal")
+# Calculamos el índice Calinski-Harabasz
+ch_fuzzy_gak = intCriteria(as.matrix(data_matrix), cl_fuzzy_gak_3@cluster, "Calinski_Harabasz")
+ch_fuzzy_gak
+```
+
+En este caso las métricas obtenidas sobre el cluster Fuzzy son bastante mejores respecto al cluster anterior. Hemos conseguido un MPC de 0.6 más cercano a que 0.1, esto indica menor solapamiento que en el cluster anterior. Un valor de SC de 2.31 que ya es mayor que 1 indicando separación significativa (antes obtuvimos -1). Tiene sentido que obtengamos esto pues el cluster obtenido ahora presenta similitudes con el mejor cluster hasta el momento.
+
+Sin embargo, comparando las métricas CH el cluster particional usando nDTW y DBA sigue presentando valores significativamente mayores por lo que seguiremos usando este cluster como el mejor. Aún así vemos como la distancia GAK nos ha ayudado a obtener un agrupamiento decente usando el método Fuzzy de clustering. Pasemos ahora a cluster jerárquico.
+
+### Hierarchical clustering
+Debemos usar métricas simétricas en este caso.
+
+#### Distancia DTW
+
+```{r}
+library(cluster)
+cl_hc_dtw_3 = tsclust(serie_new_cases_z, type = "hierarchical", k = 3,
+distance = "dtw_basic", control = hierarchical_control(method = diana),
+args = tsclust_args(dist = list(window.size = window)))
+cl_hc_dtw_3
+```
+Como siempre, veamos las series junto a los centroides correspondientes.
+
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_hc_dtw_3,3,ylab="Contagios por millón normalizados")
+```
+
+Parece haber variabilidad en los cluster 1 y 2, pero las agrupaciones tienen sentido y son en realidad similares a las de nuestro mejor cluster. Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_hc_dtw_3,1,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_hc_dtw_3,2,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_hc_dtw_3,3,9,c(3,3),42,ylab="Contagios por millón")
+```
+
+Efectivamente parece confirmarse lo que decíamos anteriormente. Demos métricas objetivas de esto.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3,type="internal")
+cvi(cl_hc_dtw_3,type="internal")
+```
+
+Obtenemos algo que cabía esperar. Como los clusters tienen sentido obtenemos un valor de CH similar al que obtuvimos con la mejor agrupación. De igual forma el cluster considerado mejor hasta ahora sigue siendo mejor. Probemos otra distancia.
+
+#### Distancia Shape-Based
+
+```{r}
+cl_hc_sbd_3 = tsclust(serie_new_cases_z, type = "hierarchical", k = 3,
+distance = "sbd", centroid = shape_extraction, control = hierarchical_control(method = diana),
+args = tsclust_args(dist = list(window.size = window)))
+cl_hc_sbd_3
+```
+Representemos la series junto a los centroides.
+
+```{r}
+visualizar_series_centroides(serie_new_cases_z,cl_hc_sbd_3,3,ylab="Contagios por millón normalizados")
+```
+Se observa una mayor vairabilidad en general. Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_cases,cl_hc_sbd_3,1,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_hc_sbd_3,2,9,c(3,3),42,ylab="Contagios por millón")
+visualizar_ejemplos(serie_new_cases,cl_hc_sbd_3,3,9,c(3,3),42,ylab="Contagios por millón")
+```
+
+Se observa un agrupamiento peor que con nuestro mejor candidato. Veámoslo en las métricas.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3,type="internal")
+cvi(cl_hc_sbd_3,type="internal")
+```
+
+Como se preveía es mejor el agrupamiento particional con distancia nDTW y centroide usando DBA. Una vez estudiado y hallado un buen agrupamiento de países según contagios por millón, pasemos a estudiar una nueva variable muy importante, el número de muertes por millón de habitantes.
+
+
+
+## Países con trayectorias de muertes similares
+
+Pasemos ahora a estudiar la variable de muertes. Por razones análogas al caso anterior usaremos la variable por millón de habitantes.
+
+```{r}
+serie_new_deaths = preparar_series_temporales(df,"new_deaths_per_million")
+```
+
+Comprobemos que nuevamente las series son de longitud 48 y normalicemos.
+
+```{r}
+unique(lengths(serie_new_deaths))
+# Aplicar a la serie
+serie_new_deaths_z = lapply(serie_new_deaths, z_score)
+```
+
+Comencemos a aplicar técnicas de clustering nuevamente.
+
+### Partitional Clustering
+Probemos de nuevo con este tipo de cluster. Comencemos con la distancia asimétrica.
+
+#### Distancia nDTW
+Determinemos el $k$ usando el coeficiente CH.
+
+```{r}
+# Definimos el rango de k a evaluar
+k_values = 2:6
+ch_scores = numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k = k_values[i]
+  cat("Evaluando k =", k, "...\n")
+  set.seed(42)
+  cl = tsclust(serie_new_deaths_z, type = "partitional", k = k, distance = "ndtw", centroid = "dba", seed = 12345)
+
+  
+  ch = cvi(cl, type="internal")["CH"]
+  
+  # Promedio de los coeficientes de silueta
+  ch_scores[i] = ch
+}
+
+# Graficar los resultados
+par(mfrow = c(1, 1))
+plot(k_values, ch_scores, type = "b", pch = 19, col = "blue",
+     xlab = "Número de clusters (k)", ylab = "Coeficiente CH",
+     main = "Selección de k usando CH con nDTW")
+```
+
+Volvemos a obtener algo similar aunque ahora la diferencia entre $k=3$ y $k=4$ no es tan clara.
+
+##### Caso $k=2$
+Al igual que antes, en este grupo esperamos obtener diferencias clara entre grupos pero una mayor variabilidad interna. Se buscan patrones generales.
+
+```{r}
+set.seed(42)
+cl_ndtw_dba_2_deaths = tsclust(serie_new_deaths_z, type = "partitional", k = 2, distance = "ndtw", centroid = "dba", seed = 12345)
+cl_ndtw_dba_2_deaths
+plot(cl_ndtw_dba_2_deaths,type="centroids")
+```
+Dibujemos las series junto a los centroides y algunos ejemplos de cada cluster a ver si se ven diferencias claras.
+
+```{r}
+visualizar_series_centroides(serie_new_deaths_z,cl_ndtw_dba_2_deaths,2,ylab="Muertes por millón normalizadas")
+```
+
+
+```{r}
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_2_deaths,1,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_2_deaths,2,9,c(3,3),42,ylab="Muertes por millón")
+```
+Encontramos países en el primer grupo con brotes prolongados mientras que en el segundo grupo hay países que tienen brotes puntuales, subidas y bajadas rápidas. Estudiemos ahora el caso $K=3$.
+
+##### Caso $k=3$
+En este caso vamos a hacer multiarranque, una técnica muy conocida en el ámbito del cluster para aquellos métodos donde hay aleatoriedad. Consiste en realizar varias inicializaciones aleatorias y seleccionar la mejor basándonos en algún criterio. En este caso nos basaremos en el coeficiente CH.
+
+```{r}
+set.seed(422)
+clust_multiarranque_3 = tsclust(serie_new_deaths_z,
+                    type = "partitional",      
+                    k = 3,                    
+                    distance = "ndtw",        
+                    centroid = "dba",         
+                    seed = 1234,
+                    control = partitional_control(nrep = 10L))
+clust_multiarranque_3
+
+set.seed(42)
+# Calcular índice CH en cada repetición
+scores = sapply(clust_multiarranque_3, function(model) {
+  cvi(model,type="internal")["CH"]
+})
+scores
+# Elegir el mejor modelo
+mejor_idx = which.max(scores)
+cl_ndtw_dba_3_deaths = clust_multiarranque_3[[mejor_idx]]
+cl_ndtw_dba_3_deaths
+plot(cl_ndtw_dba_3_deaths,type="centroids")
+```
+Parece haber países con varios brotes (grupo 3), un pico muy marcado, pero con la subida y la bajada más suave (grupo 2) y un único brote marcado (grupo 1) con leves repuntes anteriores y posteriores, pero con la bajada y subida mucho más brusca que en el grupo 2. Parece que hemos obtenido una agrupación similar que en los contagios.
+
+
+```{r}
+visualizar_series_centroides(serie_new_deaths_z,cl_ndtw_dba_3_deaths,3,ylab="Muertes por millón normalizadas")
+```
+
+Veamos algunos ejemplos a ver si se verifica lo que se dice y parece observarse en los gráficos.
+
+```{r}
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_3_deaths,1,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_3_deaths,2,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_3_deaths,3,9,c(3,3),42,ylab="Muertes por millón")
+```
+Se observan grupos que parecen homogéneos y diferenciados entre sí. El primer grupo presenta numerosos brotes de la epidemia en las muertes. Se diferencia del segundo en que dicho grupo tiene un brote muy marcado y algún brote mucho menos marcado antes o tras el mismo (con excepciones como Finlandia). En cambio el tercer grupo presenta países con un único pico muy marcado en la pandemia (salvo Burundi por ejemplo). Parece que se ha obtenido una buena agrupación veamos las métricas obtenidas.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_deaths,type="internal")
+```
+Las métricas parecen bastante decentes.
+
+Veamos qué ocurre para $k=4$ y a parrtir de ahi estudiaremos difentes distancias y métodos como hicimos anteriormente.
+##### Caso $k=4$
+Aplicamos nuevamente multiarranque.
+
+```{r}
+set.seed(42)
+clust_multiarranque_4 = tsclust(serie_new_deaths_z,
+                    type = "partitional",      
+                    k = 4,                    
+                    distance = "ndtw",        
+                    centroid = "dba",         
+                    seed = 12345,
+                    control = partitional_control(nrep = 10L))
+clust_multiarranque_4
+
+set.seed(42)
+# Calcular índice CH en cada repetición
+scores = sapply(clust_multiarranque_4, function(model) {
+  cvi(model,type="internal")["CH"]
+})
+scores
+# Elegir el mejor modelo
+mejor_idx = which.max(scores)
+cl_ndtw_dba_4_deaths = clust_multiarranque_4[[mejor_idx]]
+cl_ndtw_dba_4_deaths
+plot(cl_ndtw_dba_4_deaths,type="centroids")
+```
+
+Ya se observa una mezcla entre grupos, esto posiblemente se debe a que segmentar en 4 grupos es demasiado. Veamos los centroides junto a las series.
+
+```{r}
+visualizar_series_centroides(serie_new_deaths_z,cl_ndtw_dba_4_deaths,4,ylab="Muertes por millón normalizadas",tamano_ventana = c(2,2))
+```
+
+Efectivamente la diferencia entre las series del grupo 1 y el 4 no es muy clara. Veamos los ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_4_deaths,1,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_4_deaths,2,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_4_deaths,3,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_ndtw_dba_4_deaths,4,9,c(3,3),42,ylab="Muertes por millón")
+```
+Se observa una menor homogeneidad. Además las puntuaciones obtenidas ahora son peores que cuando usamos $k=3$. Veamos todas las métricas y comparemos.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_deaths,type="internal")
+cvi(cl_ndtw_dba_4_deaths,type="internal")
+```
+Efectivamente obtenemos métricas superiores para $k=3$ como era de esperar. Vamos a estudiar ahora más distancias del caso $k=3$ para elegir el mejor clúster posible.
+
+#### Distancia Soft-DTW
+
+```{r}
+set.seed(42)
+clust_multiarranque_sdtw_3 = tsclust(serie_new_deaths_z,
+                    type = "partitional",      
+                    k = 3,                    
+                    distance = "sdtw",        
+                    centroid = "sdtw_cent",         
+                    seed = 12345,
+                    control = partitional_control(nrep = 10L))
+
+set.seed(42)
+# Calcular índice CH en cada repetición
+scores = sapply(clust_multiarranque_sdtw_3, function(model) {
+  cvi(model,type="internal")["CH"]
+})
+scores
+# Elegir el mejor modelo
+mejor_idx = which.max(scores)
+cl_sdtw_3_deaths = clust_multiarranque_sdtw_3[[mejor_idx]]
+cl_sdtw_3_deaths
+plot(cl_sdtw_3_deaths,type="centroids")
+```
+
+Visualicemos los centroides junto a las series obtenidas.
+
+```{r}
+visualizar_series_centroides(serie_new_deaths_z,cl_sdtw_3_deaths,3,ylab="Muertes por millón normalizadas")
+```
+
+Obtenemos clústeres algo similares al que obtuvimos anteriormente, veamos en los ejemplos como es la agrupación y analicemos las métricas.
+
+
+```{r}
+visualizar_ejemplos(serie_new_deaths,cl_sdtw_3_deaths,1,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_sdtw_3_deaths,2,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_sdtw_3_deaths,3,9,c(3,3),42,ylab="Muertes por millón")
+```
+
+Vemos que los ejemplos del grupo 1 presentan poco homogeneidad. Esto significará que las métricas serán peores.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_deaths,type="internal")
+cvi(cl_sdtw_3_deaths,type="internal")
+```
+
+Vemos métricas superiores en el cluster usando nDTW y DBA.
+
+### $k$-Shape Clustering
+Volvemos a hacer como hicimos para los nuevos casos.
+
+
+
+```{r}
+set.seed(42)
+cl_sbd_3_deaths = tsclust(serie_new_deaths_z, type = "partitional", k =3, distance = "sbd", centroid = "shape",seed = 12345)
+cl_sbd_3_deaths
+plot(cl_sbd_3_deaths,type="centroids")
+```
+Realicemos las visualizaciones pertinentes.
+
+```{r}
+visualizar_series_centroides(serie_new_deaths_z,cl_sbd_3_deaths,3,ylab="Muertes por millón normalizadas")
+```
+
+Obtenemos centroides similares a los de la mejor agrupación hasta el momento, veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_new_deaths,cl_sbd_3_deaths,1,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_sbd_3_deaths,2,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_sbd_3_deaths,3,9,c(3,3),42,ylab="Muertes por millón")
+```
+Vemos en los ejemplos que la agrupación es bastante decente. Veamos en las métricas cuál es la mejor.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_deaths,type="internal")
+cvi(cl_sbd_3_deaths,type="internal")
+```
+Se obtienen métricas levemente inferiores que con nuestro mejor cluster por lo que seguiremos considerando como mejor nDTW con DBA. Nótese que la más fiable de ellas es el coeficiente CH.
+
+Pasemos a otro tipo de cluster.
+
+### TADPole Clustering
+Hagamos un procedimiento análogo al que hicimos con los contagios.
+
+Para el valor de dc.
+
+```{r}
+# Distancias DTW sobre nuestros datos normalizados
+dist_matrix_dtw_deaths = proxy::dist(serie_new_deaths_z, method = "dtw_basic")
+# Cálculo del percentil para dc
+dc_deaths = quantile(dist_matrix_dtw_deaths, probs = 0.2)
+```
+
+El tamaño de ventana es el mismo que anteriormente debido a que las series presentan la misma longitud. Estamos en consdiciones de aplicar este método de cluster.
+
+```{r}
+set.seed(42)
+cl_tadpole_3_deaths = tsclust(serie_new_deaths_z, k = 3, type = "t", trace = TRUE,
+control = tadpole_control(dc = dc_deaths,window.size = window),seed = 12345)
+cl_tadpole_3_deaths
+plot(cl_tadpole_3_deaths,type="centroids")
+```
+
+Se obtienen agrupaciones que casi no segmentan la población (hay un grupo con demasiadas observaciones).
+
+```{r}
+set.seed(42)
+cvi(cl_tadpole_3_deaths)
+```
+El coeficiente CH es muy bajo en comparación con el mejor candidato hasta el momento. Pasemos al siguiente tipo de cluster.
+
+### Fuzzy Clustering
+
+#### Distancia nDTW
+```{r}
+set.seed(42)
+cl_fuzzy_ndtw_3_deaths = tsclust(serie_new_deaths_z, type = "fuzzy", k =3, distance = "ndtw", centroid = "fcmdd",seed = 12345)
+cl_fuzzy_ndtw_3_deaths
+table(cl_fuzzy_ndtw_3_deaths@cluster)
+plot(cl_fuzzy_ndtw_3_deaths,type="centroids")
+```
+Los grupos parecen muy difusos. Seguramente la agrupación sea muy mala, veámoslo.
+
+```{r}
+cvi(cl_fuzzy_ndtw_3_deaths,type="internal")
+# Calculamos el índice Calinski-Harabasz
+data_matrix = do.call(rbind, serie_new_deaths_z)
+ch_fuzzy_ndtw_deaths = intCriteria(as.matrix(data_matrix), cl_fuzzy_ndtw_3_deaths@cluster, "Calinski_Harabasz")
+ch_fuzzy_ndtw_deaths
+```
+Efectivamente la agrupación es mucho peor. Probemos con GAK.
+
+#### Distancia Global Alignment Kernel
+
+```{r}
+set.seed(42)
+cl_fuzzy_gak_3_deaths = tsclust(serie_new_deaths_z, type = "fuzzy", k =3, distance = "gak", centroid = "fcmdd",seed = 12345)
+cl_fuzzy_gak_3_deaths
+table(cl_fuzzy_gak_3_deaths@cluster)
+plot(cl_fuzzy_gak_3_deaths,type="centroids")
+```
+Para este caso al menos vemos que son menos difusos y los grupos no son degenerados. Realicemos otras visualizaciones y comparemos métricas.
+
+```{r}
+visualizar_series_centroides(serie_new_deaths_z,cl_fuzzy_gak_3_deaths,3,ylab="Muertes por millón normalizadas")
+```
+Parecen centroides razonables. Veamos algunos ejemplos.
+
+
+```{r}
+visualizar_ejemplos(serie_new_deaths,cl_fuzzy_gak_3_deaths,1,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_fuzzy_gak_3_deaths,2,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_fuzzy_gak_3_deaths,3,9,c(3,3),42,ylab="Muertes por millón")
+```
+
+Vemos grupos no tan homogéneos y diferentes entre sí como con el mejor candidatos. Aún así la agrupación es decente. Veamos las métricas.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_deaths,type="internal")
+
+cvi(cl_fuzzy_gak_3_deaths,type="internal")
+# Calculamos el índice Calinski-Harabasz
+ch_fuzzy_gak_deaths = intCriteria(as.matrix(data_matrix), cl_fuzzy_gak_3_deaths@cluster, "Calinski_Harabasz")
+ch_fuzzy_gak_deaths
+```
+Claramente las métricas del cluster particional usando nDTW con DBA son superiores (sobre todo ver el índice CH). Pasemos finalmente al cluster jerárquico.
+
+### Hierarchical clustering
+Debemos usar métricas simétricas en este caso.
+
+#### Distancia DTW
+
+```{r}
+cl_hc_dtw_3_deaths = tsclust(serie_new_deaths_z, type = "hierarchical", k = 3,
+distance = "dtw_basic", control = hierarchical_control(method = diana),
+args = tsclust_args(dist = list(window.size = window)))
+cl_hc_dtw_3_deaths
+```
+
+Volvemos a obtener un cluster en el que hay un grupo con muy pocas observaciones. Hagamos algunos gráficos.
+
+```{r}
+visualizar_series_centroides(serie_new_deaths_z,cl_hc_dtw_3_deaths,3,ylab="Muertes por millón normalizadas")
+```
+```{r}
+visualizar_ejemplos(serie_new_deaths,cl_hc_dtw_3_deaths,1,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_hc_dtw_3_deaths,2,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_hc_dtw_3_deaths,3,9,c(3,3),42,ylab="Muertes por millón")
+```
+Pese a todo, parece que la agrupación es aceptable. Veamos las métricas.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_deaths,type="internal")
+cvi(cl_hc_dtw_3_deaths,type="internal")
+```
+
+Se obtiene mejor CH para el mejor agrupamiento hasta ahora, por tanto como es la métrica más fiable cuando usamos nDTW seguiremos eligiendo dicho modelo. Usemos otra distancia.
+
+#### Distancia Shape-Based
+
+```{r}
+cl_hc_sbd_3_deaths = tsclust(serie_new_deaths_z, type = "hierarchical", k = 3,
+distance = "sbd", centroid = shape_extraction, control = hierarchical_control(method = diana),
+args = tsclust_args(dist = list(window.size = window)))
+cl_hc_sbd_3_deaths
+```
+Volvemos a tener el mismo problema, un grupo tiene demasiadas observaciones. Representemos la series junto a los centroides.
+
+
+```{r}
+visualizar_series_centroides(serie_new_deaths_z,cl_hc_sbd_3_deaths,3,ylab="Muertes por millón normalizadas")
+```
+Esta agrupación parece pobre, pues además casi todas las observaciones se concentran en el grupo 1.
+
+```{r}
+visualizar_ejemplos(serie_new_deaths,cl_hc_sbd_3_deaths,1,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_hc_sbd_3_deaths,2,9,c(3,3),42,ylab="Muertes por millón")
+visualizar_ejemplos(serie_new_deaths,cl_hc_sbd_3_deaths,3,9,c(3,3),42,ylab="Muertes por millón")
+
+```
+El agrupamiento parece peor que en el mejor cluster encontrado.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_deaths,type="internal")
+cvi(cl_hc_sbd_3_deaths,type="internal")
+```
+
+Efectivamente se obtiene un valor de CH mucho peor.
+
+En conclusión para las muertes volvemos a considerar cluster particional con distancia nDTW y centroides hallados usando DBA. La agrupación obtenida parece bastante decente en términos de separación entre cluster y variabilidad interna. Pasemos ahora a hacer un análisis multivariante considerando tanto contagios como muertes.
+
+## Países con trayectorias de contagios y muertes similares
+
+Ahora pasemos a un enfoque multivariante. El paquete dtwclust soporta también series multivariantes, sin embargo pocas distancias pueden soportar series de esta forma. De hecho dtwclust solo soporta DTW y GAK.
+
+Pongamos los datos como los espera dtwclust.
+
+```{r}
+# Nos quedamos con los paises que estan en ambas
+# Intersección de nombres comunes
+paises_comunes = intersect(names(serie_new_cases), names(serie_new_deaths))
+
+# Filtrar ambas listas
+serie_new_cases_f = serie_new_cases[paises_comunes]
+serie_new_deaths_f = serie_new_deaths[paises_comunes]
+serie_new_cases_z_f = serie_new_cases_z[paises_comunes]
+serie_new_deaths_z_f = serie_new_deaths_z[paises_comunes]
+
+# Formato adecuado
+series_multivar = mapply(function(casos, muertes) {
+  rbind(casos, muertes)
+}, serie_new_cases_f, serie_new_deaths_f, SIMPLIFY = FALSE)
+
+# Para la variable normalizada
+series_multivar_z = mapply(function(casos, muertes) {
+  rbind(casos, muertes)
+}, serie_new_cases_z_f, serie_new_deaths_z_f, SIMPLIFY = FALSE)
+```
+
+
+Empecemos con el clustering particional.
+
+### Partitional Clustering
+#### Distancia DTW
+```{r}
+# Definimos el rango de k a evaluar
+k_values = 2:10
+sil_scores = numeric(length(k_values))
+# Matriz de distancias entre todas las series (usando dtw para multivariante)
+dist_matrix = proxy::dist(series_multivar_z, method = "dtw_basic", window.size = window)  # Lo que cogimos anteriormente
+
+for (i in seq_along(k_values)) {
+  k = k_values[i]
+  cat("Evaluando k =", k, "...\n")
+  set.seed(42)
+  cl = tsclust(series_multivar_z, type = "partitional", k = k, distance = "dtw_basic", centroid = "dba", seed = 12345)
+
+  
+  sil = silhouette(cl@cluster, dist_matrix)
+  
+  # Promedio de los coeficientes de silueta
+  sil_scores[i] = mean(sil[, 3])
+}
+
+# Graficar los resultados
+par(mfrow = c(1, 1))
+plot(k_values, sil_scores, type = "b", pch = 19, col = "blue",
+     xlab = "Número de clusters (k)", ylab = "Coeficiente CH",
+     main = "Selección de k usando Silhouette con DTW")
+```
+
+Obtenemos el máximo de la métrica para $k=2$ nuevamente. Haremos como anteriormente, estudiemos el caso trivial $k=2$ y después el segundo $k$ más alto, en este caso $k=6$.
+
+##### Caso $k=2$
+
+```{r}
+set.seed(42)
+cl_dtw_dba_mv_2 = tsclust(series_multivar_z, type = "partitional", k = 2, distance = "dtw_basic", centroid = "dba", seed = 12345)
+cl_dtw_dba_mv_2
+```
+
+Vamos a representar los centroides junto a las series.
+
+
+```{r}
+visualizar_series_centroides_mv <- function(series, cl, k, variable = NULL,
+                                            ylab = "Valor",
+                                            fecha_inicio = "2020-01-01",
+                                            frecuencia = "month",
+                                            tamano_ventana = c(1,k)) {
+  par(mfrow = tamano_ventana, mar = c(5, 6, 2, 1), mgp = c(4, 1.3, 0))  
+  max_len <- max(sapply(series, length))
+  fechas <- seq(as.Date(fecha_inicio), by = frecuencia, length.out = max_len)
+  
+  for (cluster_id in 1:k) {
+    series_cluster <- series[cl@cluster == cluster_id]
+    series_cluster <- lapply(series_cluster, as.numeric)
+    
+    matplot(fechas[seq_len(max_len)],
+            do.call(cbind, lapply(series_cluster, function(s) {
+              length(s) <- max_len
+              return(s)
+            })),
+            type = "l", lty = 1, col = rgb(0, 0, 1, 0.2),
+            main = paste("Cluster", cluster_id),
+            ylab = ylab, xlab = "Tiempo", xaxt = "n")
+    
+    ticks <- seq(min(fechas), max(fechas), by = "6 months")
+    axis(1, at = ticks, labels = format(ticks, "%b-%Y"),
+         las = 2, cex.axis = 0.8)
+    
+    centroide <- cl@centroids[[cluster_id]]
+    
+    if (is.null(variable)) {
+      num_vars <- nrow(centroide)
+      cols <- c("red", "green", "orange", "purple", "brown")
+      for (v in 1:num_vars) {
+        lines(fechas[seq_len(ncol(centroide))],
+              as.numeric(centroide[v, ]), col = cols[v], lwd = 2)
+      }
+      legend("topright", legend = paste("Centroide var", 1:num_vars),
+             col = cols[1:num_vars], lwd = 2, bty = "n")
+    } else {
+      lines(fechas[seq_len(ncol(centroide))],
+            as.numeric(centroide[variable, ]), col = "red", lwd = 2)
+      legend("topright", legend = paste("Centroide var", variable),
+             col = "red", lwd = 2, bty = "n")
+    }
+  }
+}
+
+```
+
+```{r}
+visualizar_series_centroides_mv(serie_new_cases_z_f, cl_dtw_dba_mv_2, k = 2,variable=1,ylab="Contagios por millón normalizados")
+visualizar_series_centroides_mv(serie_new_deaths_z_f, cl_dtw_dba_mv_2, k = 2, variable = 2, ylab = "Muertes por millón normalizadas")
+```
+
+Se puede ver que el primer cluster corresponde con series con más de un pico de muertes y un solo pico de contagios, mientras que en el cluster 2 suele haber más brotes de contagios y un solo pico de muertes que destaque del resto. Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos_multivariado = function(series, cl, n_cluster, n_ejemplos,
+                                              tamano_ventana = c(1,1), semilla = NULL,
+                                              variables = c("casos", "muertes"),
+                                              nombres_vars = c("new_cases_per_million", "new_deaths_per_million")) {
+  if (!is.null(semilla)) set.seed(semilla)
+  
+  # Índices de las series del cluster especificado
+  ind_cluster = sample(which(cl@cluster == n_cluster), min(n_ejemplos, sum(cl@cluster == n_cluster)))
+  
+  # Nombres de series
+  nombres = names(series)
+  if (is.null(nombres)) nombres <- paste("Serie", seq_along(series))
+  
+  # Extraer y transformar series
+  datos = purrr::map_df(ind_cluster, function(i) {
+    s = series[[i]]
+    
+    if (!is.matrix(s)) stop("Cada serie debe ser una matriz con dimensiones: variables x tiempo.")
+    
+    s_sub = s[variables, , drop = FALSE]
+    df = as.data.frame(t(s_sub))
+    df$Tiempo = seq_len(ncol(s_sub))
+    
+    df_long = tidyr::pivot_longer(df, cols = -Tiempo, names_to = "Variable", values_to = "Valor")
+    df_long$Serie = nombres[i]
+    
+    df_long$Variable = factor(df_long$Variable,
+                               levels = variables,
+                               labels = nombres_vars)
+    df_long
+  })
+
+  # Separar por variable
+  for (var in levels(datos$Variable)) {
+    datos_var = datos %>% filter(Variable == var)
+
+    print(
+      ggplot2::ggplot(datos_var, aes(x = Tiempo, y = Valor, color = Serie, group = Serie)) +
+        geom_line(alpha = 0.7, linewidth = 1) +
+        facet_wrap(~ Serie, nrow = tamano_ventana[1], ncol = tamano_ventana[2], scales = "free_y") +
+        labs(title = paste("Ejemplos del Clúster", n_cluster, "-", var),
+             x = "Tiempo", y = var) +
+        theme_minimal(base_size = 14) +
+        theme(strip.text = element_text(face = "bold"),
+              plot.title = element_text(size = 18, face = "bold", hjust = 0.5))
+    )
+  }
+}
+```
+
+```{r}
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_dtw_dba_mv_2,
+  n_cluster = 1, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_dtw_dba_mv_2,
+  n_cluster = 2, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+```
+
+Parece reflejarse lo que dijimos anteriormente.
+
+```{r}
+cvi(cl_dtw_dba_mv_2,type="internal")
+```
+
+
+Hemos conseguido segmentar en dos tipos de países, países con un único pico de contagios marcado y varios picos de muertes y países con varios picos de contagios además del importnate y un único pico de muertes que sobresale del resto. Estudiemos ahora el caso $k=6$.
+
+##### Caso $k=6$
+
+```{r}
+set.seed(42)
+cl_dtw_dba_mv_6 = tsclust(series_multivar_z, type = "partitional", k = 6, distance = "dtw_basic", centroid = "dba", seed = 12345)
+cl_dtw_dba_mv_6
+```
+
+Visualicemos los centroides de cada cluster junto a las series temporales
+
+```{r}
+visualizar_series_centroides_mv(serie_new_cases_z_f, cl_dtw_dba_mv_6, k = 6,variable=1,"Contagios por millón normalizados",tamano_ventana = c(2,3))
+visualizar_series_centroides_mv(serie_new_deaths_z_f, cl_dtw_dba_mv_6, k =6, variable = 2,"Muertes por millón normalizadas",tamano_ventana = c(2,3))
+```
+
+```{r}
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_dtw_dba_mv_6,
+  n_cluster = 1, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_dtw_dba_mv_6,
+  n_cluster = 2, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_dtw_dba_mv_6,
+  n_cluster = 3, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_dtw_dba_mv_6,
+  n_cluster = 4, n_ejemplos = 9,
+  tamano_ventana = c(3,3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_dtw_dba_mv_6,
+  n_cluster = 5, n_ejemplos =9,
+  tamano_ventana = c(3,3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_dtw_dba_mv_6,
+  n_cluster = 6, n_ejemplos = 9,
+  tamano_ventana = c(3,3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+```
+
+Parece que hemos conseguido clústers con mucho sentido. Se pueden observar dos cosas importantes.
+
+- Respecto a la similitud intra-clúster, parece que hemos conseguido clusters bastante homogéneos, esto es signo de buena agrupación.
+
+- Además los clusters son bastsante distintos entre sí, aunque haya agrupaciones con contagios similares (por ejemplo cluster 3 y 5), si observamos las muertes, estas siguen patrones completamente diferentes. Esto también es buena señal de que nuestra agrupación parece coherente. 
+
+```{r}
+cvi(cl_dtw_dba_mv_6,type="internal")
+```
+
+Usemos ahora otra distancia.
+
+#### Distancia Global Alignment Kernel 
+
+```{r}
+set.seed(42)
+cl_dtw_gak_mv_6 = tsclust(series_multivar_z, type = "partitional", k = 6, distance = "gak", centroid = "pam", seed = 12345)
+cl_dtw_gak_mv_6
+```
+
+
+No hemos conseguido segmentar prácticamente.
+
+```{r}
+cvi(cl_dtw_gak_mv_6,type="internal")
+```
+
+Como era de esperar obtenemos métricas horribles. Pasemos a hacer ahora fuzzy.
+
+### Fuzzy Clustering
+
+
+#### Distancia DTW
+
+Veamos el $k$ óptimo a parte de 2 para este caso.
+
+
+
+```{r}
+# Definimos el rango de k a evaluar
+k_values = 2:10
+sil_scores = numeric(length(k_values))
+# Matriz de distancias entre todas las series (usando dtw para multivariante)
+dist_matrix = proxy::dist(series_multivar_z, method = "dtw_basic", window.size = window)  # Lo que cogimos anteriormente
+
+for (i in seq_along(k_values)) {
+  k = k_values[i]
+  cat("Evaluando k =", k, "...\n")
+  set.seed(42)
+  cl = tsclust(series_multivar_z, type = "fuzzy", k = k, distance = "dtw_basic", centroid = "fcmdd", seed = 12345)
+
+  
+  sil = silhouette(cl@cluster, dist_matrix)
+  
+  # Promedio de los coeficientes de silueta
+  sil_scores[i] = mean(sil[, 3])
+}
+
+# Graficar los resultados
+par(mfrow = c(1, 1))
+plot(k_values, sil_scores, type = "b", pch = 19, col = "blue",
+     xlab = "Número de clusters (k)", ylab = "Coeficiente CH",
+     main = "Selección de k usando Silhouette con DTW")
+```
+
+
+Hemos obtenido $k=5$ como el que elegiremos.
+
+```{r}
+set.seed(42)
+cl_fuzzy_dtw_mv_5 = tsclust(series_multivar_z, type = "fuzzy", k =5, distance = "dtw_basic", centroid = "fcmdd",save.data= TRUE,seed = 12345)
+cl_fuzzy_dtw_mv_5
+table(cl_fuzzy_dtw_mv_5@cluster)
+```
+
+Representemos los centroides y las series de cada grupo.
+
+```{r}
+visualizar_series_centroides_mv(serie_new_cases_z_f, cl_fuzzy_dtw_mv_5, k = 5,variable=1,"Contagios por millón normalizados",tamano_ventana = c(2,3))
+visualizar_series_centroides_mv(serie_new_deaths_z_f, cl_fuzzy_dtw_mv_5, k =5, variable = 2,"Muertes por millón normalizadas",tamano_ventana = c(2,3))
+```
+
+En este caso parece que vemos menos homogeneidad que antes. Visualicemos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_fuzzy_dtw_mv_5,
+  n_cluster = 1, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_fuzzy_dtw_mv_5,
+  n_cluster = 2, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_fuzzy_dtw_mv_5,
+  n_cluster = 3, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_fuzzy_dtw_mv_5,
+  n_cluster = 4, n_ejemplos =9,
+  tamano_ventana = c(3,3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_fuzzy_dtw_mv_5,
+  n_cluster = 5, n_ejemplos = 9,
+  tamano_ventana = c(3,3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+```
+
+No se observa mal agrupamiento, pero parece peor. Veamos las métricas.
+
+```{r}
+set.seed(42)
+cvi(cl_dtw_dba_mv_6,type="internal")
+# Calculamos la matriz de distancias DTW
+dist_matrix = proxy::dist(serie_new_cases_z_f, method = "dtw_basic")
+
+# Calculamos coeficiente silhouette
+sil = silhouette(cl_fuzzy_dtw_mv_5@cluster, dist_matrix)
+summary(sil)$avg.width  
+```
+
+Efectivamente el agrupamiento no es tan bueno, de hecho el índice silhouette es prácticamente 0. Probemos con la distancia GAK.
+
+#### Distancia Global Alignment Kernel
+
+```{r}
+set.seed(42)
+cl_fuzzy_dtw_mv_5 = tsclust(series_multivar_z, type = "fuzzy", k =5, distance = "gak", centroid = "fcmdd",seed = 12345)
+cl_fuzzy_dtw_mv_5
+table(cl_fuzzy_dtw_mv_5@cluster)
+```
+
+Volvemos a obtener clusters que no nos aportan información. Finalmente pasemos al cluster jerárquico.
+
+### Hierarchical clustering
+
+### Distancia DTW
+Volvamos a determinar el $k$ ideal además de $k=2$.
+
+```{r}
+# Definimos el rango de k a evaluar
+k_values = 2:10
+sil_scores = numeric(length(k_values))
+# Matriz de distancias entre todas las series (usando dtw para multivariante)
+dist_matrix = proxy::dist(series_multivar_z, method = "dtw_basic", window.size = window)  # Lo que cogimos anteriormente
+
+for (i in seq_along(k_values)) {
+  k = k_values[i]
+  cat("Evaluando k =", k, "...\n")
+  set.seed(42)
+  cl = tsclust(series_multivar_z, type = "hierarchical", k = k,
+            distance = "dtw_basic",
+            control = hierarchical_control(method =diana),  
+            args = tsclust_args(dist = list(window.size = window)))
+
+  
+  sil = silhouette(cl@cluster, dist_matrix)
+  
+  # Promedio de los coeficientes de silueta
+  sil_scores[i] = mean(sil[, 3])
+}
+
+# Graficar los resultados
+par(mfrow = c(1, 1))
+plot(k_values, sil_scores, type = "b", pch = 19, col = "blue",
+     xlab = "Número de clusters (k)", ylab = "Coeficiente CH",
+     main = "Selección de k usando Silhouette con DTW")
+```
+
+probaremos con $k=5$ aunque no sea el segundo mayor valor, pues está muy cercano al mismo y así comparamos clusters de 5 o 6 grupos.
+
+```{r}
+cl_hc_dtw_5_mv = tsclust(series_multivar_z, type = "hierarchical", k = 5,
+            distance = "dtw_basic",
+            control = hierarchical_control(method ="complete"),
+            args = tsclust_args(dist = list(window.size = window)))
+cl_hc_dtw_5_mv
+```
+Se observan primeramente grupos no muy desequilibrados.
+
+```{r}
+visualizar_series_centroides_mv(serie_new_cases_z_f, cl_hc_dtw_5_mv, k = 5,variable=1,ylab="Contagios por millón normalizados",tamano_ventana = c(2,3))
+visualizar_series_centroides_mv(serie_new_deaths_z_f, cl_hc_dtw_5_mv, k =5, variable = 2,ylab="Muertes por millón normalizadas",tamano_ventana = c(2,3))
+```
+
+Parece que hemos obtenido una agrupación decente. Veamos algunos ejemplos.
+
+
+```{r}
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_hc_dtw_5_mv,
+  n_cluster = 1, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_hc_dtw_5_mv,
+  n_cluster = 2, n_ejemplos = 9,
+  tamano_ventana = c(3,3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_hc_dtw_5_mv,
+  n_cluster = 3, n_ejemplos = 9,
+  tamano_ventana = c(3,3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_hc_dtw_5_mv,
+  n_cluster = 4, n_ejemplos = 9,
+  tamano_ventana = c(3,3), semilla = 42,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+visualizar_ejemplos_multivariado(
+  series_multivar_z, cl_hc_dtw_5_mv,
+  n_cluster = 5, n_ejemplos = 9,
+  tamano_ventana = c(3, 3), semilla = 142,
+  variables = c("casos", "muertes"),
+  nombres_vars = c("casos", "muertes")
+)
+
+
+```
+
+Vemos clusters con bastante sentido, veamos las métricas para ver con cuál nos quedamos.
+
+```{r}
+cvi(cl_dtw_dba_mv_6,type="internal")
+cvi(cl_hc_dtw_5_mv,type="internal")
+```
+
+En las métricas vemos que el cluster jerárquico tiene en casi todos los casos mejores métricas, por ello elegiremos este cluster como el mejor hastsa el momento. Pasemos a usar la distancia GAK.
+
+#### Distancia Global Alignment Kernel
+
+```{r}
+set.seed(42)
+cl_hc_gak_5_mv = tsclust(series_multivar_z, type = "hierarchical", k = 5,
+            distance = "gak",
+            control = hierarchical_control(method = diana),
+            args = tsclust_args(dist = list(window.size = window)),
+            seed = 12345)
+cl_hc_gak_5_mv
+```
+
+Hemos vuelto a obtener grupos con muy pocas observaciones así que no seguiremos.
+
+Por tanto, consideramos el cluster jerárquico con 5 grupos y distancia DTW el mejor cluster.
+
+
+Estudiemos ahora la pandemia desde el punto de vista operativo en relación con los hospitales. Realicemos un clustering del número de pacientes UCI, teniendo en cuenta que, debido a la naturaleza de estos datos (sensibilidad o dificultad en su recogida), no se dispone de información para muchos países.
+
+Esto permite evaluar la presión real sobre el sistema sanitario allí donde están disponibles los datos pues permiten comparar la gravedad y la gestión de la pandemia, minimizando el sesgo de diferencias en diagnóstico de casos leves, pues ahora nos estamos preocupando de estudiar aquellos casos de COVID realmente preocupantes..
+
+
+## Países con trayectoria de hospitalizados similar
+Construyamos primero las series como hicimos anteriormente.
+
+
+```{r}
+serie_icu = preparar_series_temporales(df,"icu_patients_per_million")
+```
+
+Veamos si son diferentes las longitudes de cada serie.
+
+```{r}
+unique(lengths(serie_icu))
+```
+
+Por tanto tenemos series de idéntica longitud.
+
+Realicemos un escalado para que las técnicas de cluster funcionen mejor.
+
+```{r}
+serie_icu_z = lapply(serie_icu, z_score)
+```
+
+Antes de pasar a realizar clúster veamos que efectivamente el número de países es mucho menor.
+
+```{r}
+length(serie_icu)
+```
+
+Ahora solo tenemos 38 países.
+
+Usaremos algunas de las técnicas para no alargar excesivamente el estudio.
+
+
+### Partitional Clustering
+
+#### Distancia nDTW
+
+##### Prototipo DBA
+
+En vez de la distancia DTW usaremos la versión asimétrica y normalizada que llevamos usando durante la práctica. Como se describe en la memoria, el prototipo ideal cuando usamos DTW es DBA (DTW Barycenter Averaging). Para determinar el $k$ que usaremos nos basaremos en el índice CH. Como nuestra matriz de distancias es asimétrica no podemos fiarnos de índices como el Silhouette o el índice de Dunn. Además al usar DBA, el índice de Davies Bouldin también puede inducirnos error, por ello se ha elegido el índice CH para ayudarnos a determinar el $k$.
+
+```{r}
+# Definimos el rango de k a evaluar
+k_values = 2:6
+ch_scores = numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k = k_values[i]
+  cat("Evaluando k =", k, "...\n")
+  set.seed(42)
+  cl = tsclust(serie_icu_z, type = "partitional", k = k, distance = "ndtw", centroid = "dba", seed = 12345)
+
+  
+  resumen_metricas = cvi(cl,type="internal")
+  ch = resumen_metricas["CH"]
+  
+  # Promedio de los coeficientes de silueta
+  ch_scores[i] = ch
+}
+
+# Graficar los resultados
+par(mfrow = c(1, 1))
+plot(k_values, ch_scores, type = "b", pch = 19, col = "blue",
+     xlab = "Número de clusters (k)", ylab = "Coeficiente CH",
+     main = "Selección de k usando CH con DTW")
+ch_scores
+```
+
+
+
+
+Empecemos con $k=2$ y vemos que obtenemos.
+
+###### Caso $k=2$
+
+Vamos a construir el cluster correspondiente. Recordemos que tomaremos la distancia ndtw definida y centroides por DBA.
+
+```{r}
+set.seed(42)
+cl_ndtw_dba_2_icu = tsclust(serie_icu_z, type = "partitional", k =2, distance = "ndtw", centroid = "dba",seed = 12345)
+cl_ndtw_dba_2_icu
+plot(cl_ndtw_dba_2_icu,type="centroids")
+```
+
+En los centroides se ven dos tipos de países, países con un pico incial y uno intermedio más marcado y países con un gran pico intermedio marcado. Realicemos algunas visualizaciones.
+
+```{r}
+visualizar_series_centroides(serie_icu_z,cl_ndtw_dba_2_icu,2,ylab="Pacientes UCI por millón normalizados")
+```
+
+Veamos algunos ejemplos para hacernos a la idea de cómo son los grupos.
+
+```{r}
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_2_icu,1,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_2_icu,2,9,c(3,3),42,ylab="Pacientes UCI por millón")
+```
+
+Vemos similitudes en las curvas aceptables, cumpliendo con lo dicho anteriormente, veamos las métricas y probemos $k=3$.
+
+```{r}
+cvi(cl_ndtw_dba_2_icu,type="internal")
+```
+
+
+Estudiemos el caso $k=3$ a ver si coneguimos segmentar de mejor manera.
+
+###### Caso $k=3$
+
+Vamos a construir el cluster correspondiente. Recordemos que tomaremos la distancia ndtw definida y centroides por DBA.
+
+```{r}
+set.seed(42)
+cl_ndtw_dba_3_icu = tsclust(serie_icu_z, type = "partitional", k =3, distance = "ndtw", centroid = "dba",seed = 12345)
+cl_ndtw_dba_3_icu
+plot(cl_ndtw_dba_3_icu,type="centroids")
+```
+
+Ahora el grupo que ha aparecido tiene como centroide una curva con varios picos marcados alrededor del gran pico central (se diferencia con el grupo 1 en que los picos están más juntos y el primer pico del grupo 1 ocurre al principio).
+
+```{r}
+visualizar_series_centroides(serie_icu_z,cl_ndtw_dba_3_icu,3,ylab="Pacientes UCI por millón normalizados")
+```
+
+Como dijimos, se observa un primer grupo con 3 brotes y entre ellos, un brote en el medio más marcado, otro grupo con un brote muy marcado y un último grupo con varios brotes en torno al centro y mas juntos entre sí.
+
+```{r}
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_3_icu,1,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_3_icu,2,7,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_3_icu,3,8,c(3,3),42,ylab="Pacientes UCI por millón")
+```
+
+Vemos grupos con bastante sentido, parece una agrupación muy coherente. Comparemos métricas
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_icu,type="internal")
+cvi(cl_ndtw_dba_2_icu,type="internal")
+```
+
+
+Basándonos en la métrica más fiable (CH) la diferencia es baja aunque es mayor en el clúster con $k=2$, sin embargo en métricas como Silhouette y DB, el clúster con $k=3$ es algo superior. Seguiremos estudiando qué $k$ elegir en métodos posteriores, pues aún no está claro.
+
+###### Caso $k=4$
+
+Veamos si ahora los clústeres empeoran.
+
+```{r}
+set.seed(42)
+cl_ndtw_dba_4_icu = tsclust(serie_icu_z, type = "partitional", k =4, distance = "ndtw", centroid = "dba",seed = 12345)
+cl_ndtw_dba_4_icu
+plot(cl_ndtw_dba_4_icu,type="centroids")
+```
+
+<se observa un grupo con tan solo 4 observaciones. Esto ya es mala señal.
+
+```{r}
+visualizar_series_centroides(serie_icu_z,cl_ndtw_dba_4_icu,4,ylab="Pacientes UCI por millón normalizados",tamano_ventana = c(2,2))
+```
+
+No parece haber muchísima diferencia entre el clúster 3 y el 4. Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_4_icu,1,8,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_4_icu,2,4,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_4_icu,3,8,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_ndtw_dba_4_icu,4,8,c(3,3),42,ylab="Pacientes UCI por millón")
+
+```
+
+Se ve que la agrupación es peor pues hay mayor solapamiento.
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_icu,type="internal")
+cvi(cl_ndtw_dba_4_icu,type="internal")
+```
+
+
+Parece no haber ninguna mejora respecto $k=3$ (de hecho obtenemos métricas mejores para $k=3$). Cambiemos de distancia.
+
+
+
+#### Distancia Soft-DTW
+
+Veamos que $k$ conviene basándonos en el coeficiente Silhouette.
+
+```{r}
+# Definimos el rango de k a evaluar
+k_values = 2:6
+sil_scores = numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k = k_values[i]
+  cat("Evaluando k =", k, "...\n")
+  set.seed(42)
+  cl = tsclust(serie_icu_z, type = "partitional", k = k, distance = "sdtw", centroid = "sdtw_cent", seed = 12345)
+
+  
+  resumen_metricas = cvi(cl,type="internal")
+  sil = resumen_metricas["Sil"]
+  
+  # Promedio de los coeficientes de silueta
+  sil_scores[i] = sil
+}
+
+# Graficar los resultados
+par(mfrow = c(1, 1))
+plot(k_values, sil_scores, type = "b", pch = 19, col = "blue",
+     xlab = "Número de clusters (k)", ylab = "Coeficiente Sil",
+     main = "Selección de k usando Silhouette con Soft-DTW")
+```
+
+
+
+Se obtiene el óptimo de forma clara para $k=3$. Igualmente hagamos $k=2$ y $k=3$ y elegiremos la que sea mejor.
+
+###### Caso $k=2$
+
+```{r}
+set.seed(42)
+cl_sdtw_2_icu = tsclust(serie_icu_z, type = "partitional", k =2, distance = "sdtw", centroid = "sdtw_cent",seed = 12345)
+cl_sdtw_2_icu
+plot(cl_sdtw_2_icu,type="centroids")
+```
+
+Visualicemos los centroides junto a las series.
+
+```{r}
+visualizar_series_centroides(serie_icu_z,cl_sdtw_2_icu,2,ylab="Pacientes UCI por millón normalizado")
+```
+
+Algo similar a lo anterior, un primer grupo con brotes tempranos (y en general varios brotes) y un segundo grupo con un gran brote central. Veamos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_icu,cl_sdtw_2_icu,1,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_sdtw_2_icu,2,9,c(3,3),42,ylab="Pacientes UCI por millón")
+```
+
+Vemos quizá grupos no tan homogéneos.
+
+```{r}
+set.seed(42)
+cvi(cl_sdtw_2_icu,type="internal")
+cvi(cl_ndtw_dba_2_icu,tipe="internal")
+```
+
+Obtenemos métricas similares en general, veamos si con $k=3$ conseguimos mejor agrupación.
+
+###### Caso $k=3$
+
+```{r}
+set.seed(42)
+cl_sdtw_3_icu = tsclust(serie_icu_z, type = "partitional", k =3, distance = "sdtw", centroid = "sdtw_cent",seed = 12345)
+cl_sdtw_3_icu
+plot(cl_sdtw_3_icu,type="centroids")
+```
+
+Obtenemos centroides similares en forma a los anteriores.
+
+```{r}
+visualizar_series_centroides(serie_icu_z,cl_sdtw_3_icu,3,ylab="Pacientes UCI por millón normalizado")
+```
+
+Parece que los centroides representan adecuadamente a las series. Hemos obtenido, al igual que antes un primer grupo con brotes más separados, con un brote inicial muy temprano, un grupo con un gran brote central y un tercer grupo con varios brotes centrados. Veamos los ejemplos.
+
+
+```{r}
+visualizar_ejemplos(serie_icu,cl_sdtw_3_icu,1,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_sdtw_3_icu,2,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_sdtw_3_icu,3,9,c(3,3),42,ylab="Pacientes UCI por millón")
+```
+
+Hemos obtenido grupos con mucho sentido y coherencia respecto a los centroides. Esta agrupación parece superior (como sugería el gráfico del $k$).
+
+```{r}
+set.seed(42)
+cvi(cl_ndtw_dba_3_icu,tipe="internal")
+cvi(cl_ndtw_dba_2_icu,tipe="internal")
+cvi(cl_sdtw_3_icu,type="internal")
+```
+
+Aunque la métrica CH presente un valor más alto para $k=2$ con la distancia nDTW, la diferencia respecto al clúster cl_sdtw_3_icu no es sustancial. Este último, además, muestra valores muy aceptables en otras métricas, incluso bastante superiores en muchos casos. Si bien sabemos que algunas de ellas no son completamente fiables en este contexto, como hemos observado en los ejemplos, los clústeres que se forman muy homogéneos y coherentes con los centroides. Además se verifica que hay una separación clara entre los grupos. Es decir, se ha observado y comprobado con las métricas, que hay una buena separación inter-clúster y una baja separación intra-clúster.
+
+### $k$-Shape Clustering
+
+Este método se obtiene en dtwclust al usar la distancia Shape-Based (SBD) y el centroide shape extraction como bien sabemos. Volveremos a ver que $k$ sugiere.
+
+```{r}
+# Definimos el rango de k a evaluar
+k_values = 2:6
+sil_scores = numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k = k_values[i]
+  cat("Evaluando k =", k, "...\n")
+  set.seed(42)
+  cl = tsclust(serie_icu_z, type = "partitional", k = k, distance = "sbd", centroid = "shape", seed = 12345)
+
+  
+  resumen_metricas = cvi(cl,type="internal")
+  sil = resumen_metricas["Sil"]
+  
+  # Promedio de los coeficientes de silueta
+  sil_scores[i] = sil
+}
+
+# Graficar los resultados
+par(mfrow = c(1, 1))
+plot(k_values, sil_scores, type = "b", pch = 19, col = "blue",
+     xlab = "Número de clusters (k)", ylab = "Coeficiente Sil",
+     main = "Selección de k usando Silhouette con Soft-DTW")
+```
+
+Sugiere $k=3$, aunque $k=4$ presenta un valor similar. Probemos solo con estos dos valores.
+
+###### Caso $k=3$
+
+
+```{r}
+set.seed(42)
+cl_sbd_3_icu = tsclust(serie_icu_z, type = "partitional", k =3, distance = "sbd", centroid = "shape",seed = 12345)
+cl_sbd_3_icu
+plot(cl_sbd_3_icu,type="centroids")
+```
+
+Volvemos a obtener centroides similares. Esto es buena señal pues los patrones captados por los algoritmos son parecidos. 
+
+```{r}
+visualizar_series_centroides(serie_icu_z,cl_sbd_3_icu,3,ylab="Pacientes UCI por millón normalizados")
+```
+
+Similar como acabamos de decir.
+
+```{r}
+visualizar_ejemplos(serie_icu,cl_sbd_3_icu,1,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_sbd_3_icu,2,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_sbd_3_icu,3,9,c(3,3),42,ylab="Pacientes UCI por millón")
+```
+
+En los ejemplos se ven nuevamente agrupaciones muy decentes (aunque quizá parece mejor agrupamiento el anterior). Veamos las métricas qué sugieren.
+
+```{r}
+set.seed(42)
+cvi(cl_sdtw_3_icu,tipe="internal")
+cvi(cl_sbd_3_icu,type="internal")
+```
+
+En general se obtienen mejores métricas para el agrupamiento usando la distancia Soft-DTW. El coeficiente DB es mejor en esta última agrupación aunque la diferencia no es muy grande. Por ello seguiremos eligiendo la agrupación Soft-DTW como la mejor. Pasemos por último al caso $k=4$, pues en realidad ya hemos conseguido una agrupación muy buena.
+
+###### Caso $k=4$
+
+
+```{r}
+set.seed(42)
+cl_sbd_4_icu = tsclust(serie_icu_z, type = "partitional", k =4, distance = "sbd", centroid = "shape",seed = 12345)
+cl_sbd_4_icu
+plot(cl_sbd_4_icu,type="centroids")
+```
+
+Parece haber cierto solapamiento entre el grupo 3 y 4.
+
+```{r}
+visualizar_series_centroides(serie_icu_z,cl_sbd_4_icu,4,ylab="Pacientes UCI por millón normalizados",tamano_ventana = c(2,2))
+```
+
+Veamos algunos ejemplos.
+
+```{r}
+visualizar_ejemplos(serie_icu,cl_sbd_4_icu,1,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_sbd_4_icu,2,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_sbd_4_icu,3,9,c(3,3),42,ylab="Pacientes UCI por millón")
+visualizar_ejemplos(serie_icu,cl_sbd_4_icu,4,9,c(3,3),42,ylab="Pacientes UCI por millón")
+
+```
+
+Hemos obtenido agrupaciones similares, aunque no parece haber mucha diferencia entre los grupos 3 y 4. Posiblemente esto se refleje en métricas como el índice DB.
+
+```{r}
+set.seed(42)
+cvi(cl_sdtw_3_icu,tipe="internal")
+cvi(cl_sbd_4_icu,type="internal")
+```
+
+Efectivamente ahora las métricas sugieren claramente que la agrupación con distancia Soft-DTW es la mejor. Vamos a elegir definitivamente esta agrupación elegida como la elegida, pues ya de por sí es muy buena.Concluimos la parte práctica en la que construimos los modelos.
+
+Para terminar, guardaremos las series univariantes junto al mejor cluster encontrado y lo mismo para la multivariante.
+
+Primero para los casos
+
+```{r}
+# Obtener nombres de países
+nombres_paises_casos = names(serie_new_cases)
+
+# Extraer los clusters como vector
+clusters_casos = cl_ndtw_dba_3@cluster
+
+# Crear una nueva lista con el cluster incluido
+serie_new_cases_cluster = mapply(function(pais, serie, cluster) {
+  list(
+    casos = serie,
+    cluster = cluster
+  )
+}, pais = nombres_paises_casos, serie = serie_new_cases, cluster = clusters_casos, SIMPLIFY = FALSE)
+
+# Asignar nombres de países a la nueva lista
+names(serie_new_cases_cluster) = nombres_paises_casos
+serie_new_cases_cluster$Afghanistan$cluster
+
+# Guardamos como objeto Rdata
+save(serie_new_cases_cluster, file = "serie_new_cases_cluster.RData")
+```
+
+
+Ahora para las muertes.
+
+
+```{r}
+# Obtener nombres de países
+nombres_paises_muertes = names(serie_new_deaths)
+
+# Extraer los clusters como vector
+clusters_muertes = cl_ndtw_dba_3_deaths@cluster
+
+# Crear una nueva lista con el cluster incluido
+serie_new_deaths_cluster = mapply(function(pais, serie, cluster) {
+  list(
+    muertes = serie,
+    cluster = cluster
+  )
+}, pais = nombres_paises_muertes, serie = serie_new_deaths, cluster = clusters_muertes, SIMPLIFY = FALSE)
+
+# Asignar nombres de países a la nueva lista
+names(serie_new_deaths_cluster) = nombres_paises_muertes
+serie_new_deaths_cluster$Afghanistan$cluster
+
+# Guardamos como objeto Rdata
+save(serie_new_deaths_cluster, file = "serie_new_deaths_cluster.RData")
+```
+
+
+Ahora para contagios y muertes.
+
+```{r}
+# Obtener nombres de países
+nombres_paises_casos_muertes = names(series_multivar)
+
+# Extraer los clusters como vector
+clusters_casos_mv = cl_hc_dtw_5_mv@cluster
+
+# Crear una nueva lista con el cluster incluido
+serie_new_cases_muertes_cluster = mapply(function(pais, serie, cluster) {
+  list(
+    casos = serie,
+    cluster = cluster
+  )
+}, pais = nombres_paises_casos_muertes, serie = series_multivar, cluster = clusters_casos_mv, SIMPLIFY = FALSE)
+
+# Asignar nombres de países a la nueva lista
+names(serie_new_cases_muertes_cluster) = nombres_paises_casos_muertes
+serie_new_cases_muertes_cluster$Afghanistan$cluster
+
+# Guardamos como objeto Rdata
+save(serie_new_cases_muertes_cluster, file = "serie_new_cases_muertes_cluster.RData")
+```
+
+Finalmente para los pacientes UCI.
+
+```{r}
+# Obtener nombres de países
+nombres_paises_icu = names(serie_icu)
+
+# Extraer los clusters como vector
+clusters_icu = cl_sdtw_3_icu@cluster
+
+# Crear una nueva lista con el cluster incluido
+serie_icu_cluster = mapply(function(pais, serie, cluster) {
+  list(
+    icu = serie,
+    cluster = cluster
+  )
+}, pais = nombres_paises_icu, serie = serie_icu, cluster = clusters_icu, SIMPLIFY = FALSE)
+
+# Asignar nombres de países a la nueva lista
+names(serie_icu_cluster) = nombres_paises_icu
+serie_icu_cluster$Algeria
+
+# Guardamos como objeto Rdata
+save(serie_icu_cluster, file = "serie_icu_cluster.RData")
+```
+
