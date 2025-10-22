@@ -1,0 +1,440 @@
+---
+title: "Anexo: Análisis Preliminar"
+author: "Vicente Muñoz, Raúl"
+lang: es
+format: 
+  html:
+    toc: true
+    embed-resources: true
+  pdf:
+    toc: true
+    include-in-header: 
+      text: |
+        \usepackage{fvextra}
+        \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}         
+    include-before-body:
+      text: |
+        \RecustomVerbatimEnvironment{verbatim}{Verbatim}{
+          showspaces = false,
+          showtabs = false,
+          breaksymbolleft={},
+          breaklines
+          % Note: setting commandchars=\\\{\} here will cause an error 
+        }                   
+    
+editor: source
+execute: 
+  error: true
+---
+
+# Entrega VISDAT
+
+Summary de los datos.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+url = "https://catalog.ourworldindata.org/garden/covid/latest/compact/compact.csv"
+download.file(url, destfile = "compact.csv", mode = "wb")
+datos = read.csv("compact.csv", encoding = "UTF-8")
+attach(datos)
+summary(datos)
+```
+
+En el análisis de los datos de COVID-19 se observa una gran cantidad de valores NA en varias variables. Esto puede representar un problema, pero es importante entender el origen de estos NAs antes de decidir cómo tratarlos.
+
+En el caso de los casos y muertes, los NAs suelen deberse a ajustes y correcciones en los reportes, como observaciones negativas para balancear series de datos. Por esta razón, se opta por ignorar este tipo de NAs, ya que no corresponden a valores perdidos en el sentido tradicional.
+
+Por otro lado, en variables sensibles como hospitalizaciones o pacientes UCI, los datos faltantes reflejan la falta de reporte de algunos países. En estos casos, cualquier visualización se basará solo en los datos disponibles y se indicará claramente qué países están representados.
+
+Respecto a las variables de vacunación, cabe destacar que al inicio de la pandemia no existían vacunas, por lo que es esperable una gran cantidad de NAs en los primeros períodos. Además, los datos válidos se concentran en los meses donde efectivamente se desarrollaron campañas de vacunación.
+
+Por tanto, las visualizaciones se realizarán sobre las observaciones disponibles, ya que podría no tener mucho sentido realizar imputación de los NAs en las variables que se van a tratar (por ejemplo, vacunaciones, contagios o muertes).
+
+Veamos ahora las variables no numéricas.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+variables_no_numericas = names(datos)[sapply(datos, function(x) !is.numeric(x))]
+print(variables_no_numericas)
+```
+
+## Descripción de variables
+
+Describamos algunas variables. Primero en cuanto a casos confirmados:
+
+Estos incluyen tanto casos confirmados como probables cuando están reportados. Los **nuevos casos (new_cases)** representan los casos confirmados en un período determinado, mientras que el **total de casos (total_cases)** supone la medida acumulada de los nuevos casos. Por otro lado, **nuevos casos suavizados (new_cases_smoothed)** reflejan la tendencia de nuevos casos ajustada a un período de 7 días para eliminar fluctuaciones diarias (ideal para representaciones progresivas de los datos que se van actualizando). Las métricas **por millón de personas** **(new_cases_per_million, total_cases_per_million y new_cases_smoothed_per_million)** ajustan estos valores según el tamaño de la población, facilitando comparaciones entre diferentes regiones de forma justa. Estas variables permiten analizar tanto el **total de casos** como su evolución y distribución en función de la población.
+
+Estudiando ahora las muertes confirmadas:
+
+El **total de muertes** **(total_deaths)** representa el número acumulado de muertes confirmadas, que puede incluir también muertes probables cuando están reportadas. Las **nuevas muertes (new_deaths)** corresponden al número de muertes confirmadas en un periodo determinado, mientras que las **nuevas muertes suavizadas (new_deaths_smoothed)** reflejan la tendencia de las muertes ajustada a un período de 7 días para eliminar fluctuaciones diarias. Las métricas **por millón de personas (new_deaths_per_million, total_deaths_per_million y new_deaths_smoothed_per_million)** ajustan estos valores según el tamaño de la población, lo que facilita las comparaciones entre regiones. Estas variables permiten analizar tanto el **total de muertes** como su evolución y distribución en función de la población, aunque es importante tener en cuenta que, debido a los protocolos variables y los desafíos en la atribución de la causa de muerte, el número de muertes confirmadas puede no representar con exactitud el número real de muertes causadas por COVID-19.
+
+Describamos algunas variables sobre la **mortalidad en exceso**. La **mortalidad en exceso (excess_mortality)** representa la **diferencia porcentual** entre el número de muertes reportadas semanalmente o mensualmente en 2020-2021 y el número proyectado de muertes para el mismo período, basado en los años anteriores. La **mortalidad en exceso acumulada (excess_mortality_cumulative)** muestra la **diferencia porcentual acumulada** entre las muertes reportadas desde el 1 de enero de 2020 y las muertes proyectadas para el mismo período. Por otro lado, la **mortalidad en exceso acumulada absoluta (excess_mortality_cumulative_absolute)** refleja la **diferencia acumulada** entre las muertes reportadas y las proyectadas desde el 1 de enero de 2020. Finalmente, la **mortalidad en exceso acumulada por millón (excess_mortality_cumulative_per_million)** ajusta esta diferencia para cada **1,000,000 de personas**, lo que facilita las comparaciones entre diferentes regiones en función del tamaño de la población. Estas variables permiten evaluar el impacto del COVID-19 en la mortalidad en comparación con las proyecciones basadas en los años anteriores.
+
+Ahora variables relacionadas con hospitales y unidades de cuidados intensivos (UCI):
+
+El número de **pacientes en UCI (icu_patients)** indica la cantidad de pacientes con COVID-19 que están en unidades de cuidados intensivos (UCI) en un día específico. La **cantidad de pacientes en UCI por millón (icu_patients_per_million)** ajusta esta cifra según el tamaño de la población, calculando el número de pacientes en UCI por cada **1,000,000 de personas**. De manera similar, el número de **pacientes hospitalizados (hosp_patients)** refleja la cantidad de pacientes con COVID-19 ingresados en hospitales en un día determinado, mientras que **pacientes hospitalizados por millón (hosp_patients_per_million)** ajusta este valor a la población por cada **1,000,000 de personas**. Las **admisiones semanales en UCI (weekly_icu_admissions)** y las **admisiones semanales en hospitales (weekly_hosp_admissions)** indican la cantidad de pacientes recién admitidos en esas instalaciones durante una semana (incluyendo el día de reporte y los seis días anteriores), y las métricas ajustadas por millón **(weekly_icu_admissions_per_million y weekly_hosp_admissions_per_million)** calculan estas cifras en relación con la población.
+
+Estas variables proporcionan una visión clara de la carga en hospitales y UCI, permitiendo evaluar la capacidad del sistema sanitario para hacer frente a la pandemia.
+
+La variable **índice de severidad de la respuesta gubernamental (stringency_index)** mide la **intensidad de las medidas gubernamentales** frente al COVID-19. Se calcula mediante un índice compuesto que incluye **9 indicadores de respuesta**, como el cierre de escuelas, el cierre de lugares de trabajo y las prohibiciones de viajes. El índice es escalado a un valor de **0 a 100**, donde **100** representa la **respuesta más estricta**.
+
+Este índice ayuda a evaluar el nivel de restricciones y medidas implementadas por los gobiernos para controlar la pandemia.
+
+La variable **tasa de reproducción (reproduction_rate)** representa una estimación en tiempo real de la **tasa de reproducción efectiva (R)** del COVID-19. Esta tasa indica el número promedio de personas a las que cada persona infectada transmite el virus. Una tasa de reproducción superior a 1 sugiere que la pandemia está en expansión, mientras que una tasa por debajo de 1 indica que la propagación está disminuyendo.
+
+En cuanto a las pruebas y los positivos:
+
+Las variables sobre **pruebas y positividad** se refieren a los **test realizados** para detectar COVID-19. El **total de pruebas (total_tests)** representa la cantidad total de pruebas (se va acumulando) realizadas, mientras que las **nuevas pruebas (new_tests)** indican cuántas pruebas se realizaron en un período determinado (solo calculadas para días consecutivos). El número de **pruebas por cada mil personas (total_tests_per_thousand)** y **nuevas pruebas por cada mil personas (new_tests_per_thousand)** ajustan estas cifras según el tamaño de la población. Las **nuevas pruebas suavizadas (new_tests_smoothed)** muestran los datos de nuevas pruebas ajustados con una media móvil de 7 días para suavizar las fluctuaciones diarias, y **nuevas pruebas suavizadas por cada mil personas (new_tests_smoothed_per_thousand)** ajusta este valor a la población.
+
+El **índice de positividad (positive_rate)** representa el porcentaje de pruebas que dan positivo, calculado como un promedio móvil de 7 días, y **tests por caso (tests_per_case)** mide cuántas pruebas se realizaron por cada nuevo caso confirmado, también con un promedio móvil de 7 días.
+
+Estas variables ayudan a entender el volumen de pruebas realizadas y la tasa de positividad del COVID-19 en diferentes regiones.
+
+Hablemos ahora de las vacunas:
+
+Las variables sobre **vacunaciones** incluyen el **total de vacunas (total_vaccinations)** administradas, el número de **personas vacunadas (people_vaccinated)** , y el número de **personas completamente vacunadas (people_fully_vaccinated)** (que recibieron todas las dosis según el protocolo inicial de vacunación). Además, se incluye el **total de dosis de refuerzo (total_boosters)** administradas (dosis adicionales a las prescritas inicialmente). Las **vacunas por dia (new_vaccinations)** indican las dosis administradas en un período determinado (solo calculadas para días consecutivos), mientras que las **nuevas dosis suavizadas (new_vaccinations_smoothed)** reflejan las dosis administradas con un promedio móvil de 7 días, suavizando las fluctuaciones diarias.
+
+Las métricas **por cada 100 personas** ajustan los valores de vacunación en relación con la población total, como el **total de dosis administradas por cada 100 personas (total_vaccinations_per_hundred)** o el **número de personas vacunadas por cada 100 personas (people_vaccinated_per_hundred)**. La **vacunación de refuerzo por cada 100 personas (total_boosters_per_hundred)** ajusta el número de dosis de refuerzo administradas para la población total, y el **nuevo número de vacunaciones suavizado por cada millón (new_vaccinations_smoothed_per_million)** ajusta las nuevas dosis administradas según el tamaño de la población (por cada **1,000,000 de personas**). Además, el **nuevo número de personas vacunadas suavizado (new_people_vaccinated_smoothed)** muestra el número de personas que reciben su primera dosis de vacuna, con una media móvil de 7 días, y **nuevo número de personas vacunadas suavizado por cada 100 personas (new_people_vaccinated_smoothed_per_hundred)** ajusta este valor a la población total.
+
+Estas variables permiten evaluar la **cobertura y la velocidad de vacunación**, tanto en términos de dosis administradas como de personas alcanzadas, lo que es clave para comprender el progreso de las campañas de vacunación en diferentes regiones.
+
+Pasamos ahora a las variables que proporcionan información **geográfica** y **socioeconómica** relacionada con los países y regiones. El **código ISO (code)** es un código de tres letras que representa a cada país según el estándar ISO 3166-1 alpha-3, y **continente (continent)** indica el continente al que pertenece una ubicación geográfica. **El pais (country)** especifica la localización geográfica, y **fecha (date)** representa la fecha en la que se realizó la observación.
+
+Las variables **demográficas** incluyen la **población (population)**, la **densidad de población (population_density)** y la **edad mediana (median_age)**.
+
+Las variables **económicas** incluyen el **PIB per cápita (gdp_per_capita)**, y la proporción de la población que vive en **pobreza extrema (extreme_poverty)**.
+
+En cuanto a la salud, se incluye la **prevalencia de diabetes (diabetes_prevalence)**.
+
+Además, se incluyen datos sobre el porcentaje de **instalaciones de lavado de manos (handwashing_facilities)**, la cantidad de **camas de hospital por cada 1,000 personas (hospital_beds_per_thousand)**, y la **expectativa de vida (life_expectancy)** al nacer en 2019 (esta variable fue eliminada pues solo contenía Nas). Finalmente, el **índice de desarrollo humano (human_development_index)** mide el logro promedio en tres dimensiones fundamentales del desarrollo humano: una vida larga y saludable, conocimientos, y un nivel de vida digno, con valores correspondientes a 2019.
+
+Estas variables proporcionan un contexto clave para interpretar los datos de COVID-19 en relación con las características demográficas, sociales y económicas de cada país o región.
+
+## Gráficos
+### Diagramas de barras por continentes
+Veamos los continentes con más casos y más muertes  por millón de habitantes. Para ello si queremos realizar un gráfico representativo, debemos tomar el número de casos (o muertes) y dividirlo por una cantidad que tenga en cuenta el tamaño del continente. Por ello usaremos la variable population. Para considerar aquellos países de los que tenemos datos dentro de cada continente.
+
+#### Nuevos casos por millón de habitantes
+En primer lugar tomamos la población para cada país y tomamos la población continental como la suma de las poblaciones que componen los países de cada continente. Una vez tenemos esto, es muy fácil calcular los  nuevos casos por millón de habitantes según continente. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Obtenemos población única por país
+library(ggplot2)
+library(dplyr)
+# Filtrar solo países con continente definido y población no nula
+pop_pais <- datos %>%
+  filter(!is.na(continent), continent != "", !is.na(population)) %>%
+  group_by(continent, country) %>%
+  summarise(population = max(population, na.rm = TRUE), .groups = "drop")
+# Total de población por continente
+pop_cont <- pop_pais %>%
+  group_by(continent) %>%
+  summarise(
+    total_population = sum(population, na.rm = TRUE)
+  )
+
+# Total de nuevos casos por continente
+casos_cont <- datos %>%
+  filter(!is.na(continent), continent != "", !is.na(new_cases_smoothed)) %>%
+  group_by(continent) %>%
+  summarise(total_new_cases = sum(new_cases, na.rm = TRUE), .groups = "drop")
+
+# Unimos los datos
+datos_casos_continentes <- casos_cont %>%
+  inner_join(pop_cont, by = "continent") %>%
+  mutate(
+    total_new_cases_per_million = (total_new_cases / total_population) * 1e6
+  )
+
+# Diagrama de barras: total ajustado al tamaño del continente
+ggplot(datos_casos_continentes, aes(x = reorder(continent, -total_new_cases_per_million), y = total_new_cases_per_million, fill = continent)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Casos nuevos de COVID-19 por millón según continente",
+    x = "Continente",
+    y = "Casos Nuevos por millón de habitantes",
+    fill = "Continente"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+```
+
+En el gráfico se observa que Europa es el continente con más casos por millón de habitantes. Muy cerca se encuentra Oceanía. Aunque Oceanía no fue uno de los focos principales de la pandemia en los primeros años, comenzó a registrar un gran número de contagios en 2022, principalmente debido a la variante ómicron.
+
+Las siguientes zonas con más contagios por millón de habitantes son Norteamérica y Sudamérica (en los datos venían separados en vez de tomar como continente América).
+
+Finalmente vemos en el gráfico que el siguiente continente con mas contagios por millón, bastante separado de Norteamérica y Sudamérica es Asia y por último África, que muestra muy pocos casos por millón en los datos reportados, especialmente en comparación con los demás continentes.
+
+Es importante tomar la variable de casos por millón de habitantes, ya que permite tener en cuenta el tamaño de la población de cada continente. No es lo mismo registrar 1000 casos en un país como China que en un país pequeño como Luxemburgo: en el primer caso el impacto es mínimo en proporción a la población, mientras que en el segundo representa un número muy elevado en relación con sus habitantes.
+
+#### Nuevas muertes por millón de habitantes
+La estrategia será exactamente la misma que en el gráfico anterior. Hagamos la visualización.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Obtenemos población única por país
+# Filtrar solo países con continente definido y población no nula
+pop_pais <- datos %>%
+  filter(!is.na(continent), continent != "", !is.na(population)) %>%
+  group_by(continent, country) %>%
+  summarise(population = max(population, na.rm = TRUE), .groups = "drop")
+# Total de población por continente
+pop_cont <- pop_pais %>%
+  group_by(continent) %>%
+  summarise(
+    total_population = sum(population, na.rm = TRUE)
+  )
+
+# Total de nuevas muertes por continente
+muertes_cont <- datos %>%
+  filter(!is.na(continent), continent != "", !is.na(new_deaths)) %>%
+  group_by(continent) %>%
+  summarise(total_new_deaths = sum(new_deaths, na.rm = TRUE), .groups = "drop")
+
+
+# Unimos los datos
+datos_muertes_continentes <- muertes_cont %>%
+  inner_join(pop_cont, by = "continent") %>%
+  mutate(
+    total_new_deaths_per_million = (total_new_deaths / total_population) * 1e6
+  )
+
+# Diagrama de barras: total ajustado al tamaño del continente
+ggplot(datos_muertes_continentes, aes(x = reorder(continent, -total_new_deaths_per_million), y = total_new_deaths_per_million, fill = continent)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Muertes de COVID-19 por millón según continente",
+    x = "Continente",
+    y = "Muertes por millón de habitantes",
+    fill = "Continente"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+```
+
+En este gráfico se observa que los continentes con más muertes por millón de habitantes fueron, en este orden, Sudamérica, Europa y Norteamérica. Estos tres se destacan claramente sobre el resto. Oceanía, aunque registró muchísimos contagios, especialmente durante la ola de la variante ómicron, no tuvo un número elevado de muertes. Esto se debe a que ómicron era más contagiosa pero menos letal, y además llegó en un momento en el que la población ya estaba ampliamente vacunada (veremos eso en gráficos  posteriores), lo que ayudó a reducir la mortalidad. En cambio, en Norteamérica y Sudamérica las muertes por millón fueron muy altas. Europa mostró tanto un alto número de contagios como de muertes por millón. Por su parte, los continentes con menos muertes por millón, al igual que ocurría con los contagios, fueron Asia y Oceanía.
+
+Pasemos ahora a gráficos de series temporales.
+
+### Gráficos de Series Temporales
+Para estos gráficos y los de la sección final se ha decidido no imputar los valores faltantes (NAs). Esto se debe a que en variables como los casos o las muertes no tendría sentido imputar datos por la propia naturaleza de estas cifras, que reflejan conteos reales. En el caso de las vacunas, la presencia de NAs se explica por periodos en los que las vacunas aún no existían o por la falta de reporte de algunos países. Respecto a las variables relacionadas con hospitalizaciones, los datos disponibles corresponden únicamente a aquellos países que decidieron compartirlos. 
+
+Por tanto, los gráficos se elaborarán en base a los datos reportados y las conclusiones se extraerán de esos valores.
+
+#### Contagios
+Veamos la evolución de nuevos casos con el paso del tiempo agrupando mes. Si agrupáramos simplemente de forma diaria obtendríamos un gráfico muy sucio debido a la cantidad de fechas disponibles en el Dataframe. Por ello se ha decidido tomar la agrupación de forma mensual.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(lubridate)
+datos_agrupados_contagios_mes <- datos %>%
+  mutate(date = as.Date(date)) %>% 
+  mutate(year_month = floor_date(date, "month")) %>%  
+  group_by(year_month) %>%  # Agrupamos por mes y año
+  summarise(new_cases = sum(new_cases, na.rm = TRUE)) 
+
+# Crear el gráfico
+ggplot(datos_agrupados_contagios_mes, aes(x = year_month, y = new_cases)) +
+  geom_point(color="red") +                  
+  geom_line(color="red") +                     
+  labs(x = "Mes-Año", y = "Casos nuevos por mes",
+       "Evolución mensual de nuevos casos",
+       title="Evolución mensual de nuevos casos") +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+En este gráfico vemos como los casos de COVID-19 experimentaron una subida progresiva hasta un pico muy pronunciado en torno a 2022. Una vez pasado dicho año la pandemia fue aminorándose (posiblemente gracias a que la mayoría de la población está vacunada). Los dos picos que se observan más adelante pueden sugerir rebrotes o nuevas variantes de la enfermedad. Finalmente vemos como en 2024 el número de contagios es muy bajo. Realicemos el mismo gráfico para las muertes
+
+#### Muertes
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+datos_agrupados_muertes_mes <- datos %>%
+  mutate(date = as.Date(date)) %>%  #
+  mutate(year_month = floor_date(date, "month")) %>%  
+  group_by(year_month) %>% # Agrupamos por mes y año
+  summarise(new_deaths = sum(new_deaths, na.rm = TRUE))  
+
+# Crear el gráfico
+ggplot(datos_agrupados_muertes_mes, aes(x = year_month, y = new_deaths)) +
+  geom_point(color="blue") +                
+  geom_line(color="blue") +                      
+  labs(x = "Mes-Año", y = "Muertes por mes",
+       title="Evolución mensual de nuevas muertes") +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+En el gráfico de muertes se observa una evolución algo diferente. Aunque en 2022 hubo muchas muertes asociadas al gran volumen de contagios, ya en 2021 el número era elevado (posiblemente gracias al impacto de la variante delta, que fue más letal). A partir de 2022, aunque los contagios siguieron siendo altos por momentos, el número de muertes empezó a disminuir gracias al efecto de las vacunas y al menor riesgo asociado a las nuevas variantes. Veamos si esto es coherente con los gráficos relacionados con las vacunas.
+
+#### Personas vacunadas
+
+Pasemos ahora a ver la evolución de las personas vacunadas. De forma intuitiva, la gráfica debe mostrar un crecimiento progresivo: al principio no hay personas vacunadas (porque las vacunas aún no estaban disponibles) y, con el tiempo, el número de vacunados va aumentando hasta alcanzar un nivel máximo. Este aumento en la vacunación ayudó a frenar la gravedad de la pandemia, contribuyendo a la disminución de las muertes y, en menor medida, de los contagios (debido a variantes muy contagiosas como la ómicron).
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+datos_agrupados_vacunados_mes <- datos %>%
+  mutate(date = as.Date(date)) %>% 
+  mutate(year_month = floor_date(date, "month")) %>%  #
+  group_by(year_month) %>%  # Agrupamos por mes y año
+  summarise(people_vaccinated = sum(people_vaccinated, na.rm = TRUE))  
+
+# Crear el gráfico
+ggplot(datos_agrupados_vacunados_mes, aes(x = year_month, y = people_vaccinated)) +
+  geom_point(color="goldenrod") +                     
+  geom_line(color="goldenrod") +                      
+  labs(x = "Mes-Año", y = "Vacunados por mes",
+       title="Evolución mensual de vacunados") +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+```
+
+Efectivamente en 2022 se alcanza un aumento muy pronunciado de las personas vacunadas. Esta es una de las causas por las que los contagios empiezan a disminuir en 2022 pese a que se alcance un pico por estas fechas. 
+
+#### Comparación contagios y personas vacunadas
+
+Veamos un gráfico que agrupe la serie temporal de los casos nuevos y los vacunados para ver mejor este efecto. Para ello usaremos un segundo eje $Y$ para que se vean correctamente las bajadas y las subidas. Como las escalas son distintas y queremos ver cuándo se producen subidas y bajadas en ambas variables vamos a ajustar la escala de las personas vacunadas dividiendo por mil.
+
+```{r, echo=FALSE, message=FALSE,warning=FALSE,fig.width=10,fig.height=6}
+# Unir ambas series en un solo dataframe
+datos_combinados_vacunados <- datos_agrupados_contagios_mes %>%
+  left_join(datos_agrupados_vacunados_mes, by = "year_month")
+
+# Crear el gráfico con dos ejes Y
+ggplot(datos_combinados_vacunados, aes(x = year_month)) +
+  geom_point(aes(y = new_cases, color = "Nuevos Casos")) +
+  geom_line(aes(y = new_cases, color = "Nuevos Casos")) +
+  geom_point(aes(y = people_vaccinated / 1000, color = "Vacunados")) +  # Ajuste de escala para ver mejor subidas y bajadas
+  geom_line(aes(y = people_vaccinated / 1000, color = "Vacunados")) +  # Ajuste de escala
+  labs(
+    x = "Mes-Año",
+    y = "Casos Nuevos",
+    color = "Variables",
+    title="Comparación temporal de contagios y vacunados"
+  ) +
+  scale_color_manual(values = c("Nuevos Casos" = "red", "Vacunados" = "goldenrod")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(
+    name = "Casos Nuevos",
+    sec.axis = sec_axis(~ . * 1000, name = "Vacunados")  # Eje secundario para vacunados
+  )
+```
+
+Ahora el efecto es mucho mas claro. El pico de nuevos casos se produce a comienzos de 2022. En el mismo punto el número de vacunados comienza a ser muy elevado y eso hace que al poco tiempo decrezca rápidamente el número de contagios, observándose solo dos rebrotes de contagios. Esto se traducirá en que el número de vacunados y el estar vacunado podrían ser variables muy importantes para saber el número de contagios en la serie temporal, pues vemos una relación directa cuando ha pasado suficiente tiempo y el número de vacunados es lo suficientemente grande.
+
+#### Vacunaciones
+
+Usemos ahora una variable ligeramente diferente. Esta es new_vaccinatios. La diferencia entre esta y la anterior es que new_vaccinations mide el número total de dosis administradas cada día, mientras que people_vaccinated hace referencia al número de personas que recibieron su primera dosis.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+datos_agrupados_vacunaciones_mes <- datos %>%
+  mutate(date = as.Date(date)) %>%  
+  mutate(year_month = floor_date(date, "month")) %>%  
+  group_by(year_month) %>%  # Agrupamos por mes y año
+  summarise(new_vaccinations = sum(new_vaccinations, na.rm = TRUE))
+
+# Crear el gráfico
+ggplot(datos_agrupados_vacunaciones_mes, aes(x = year_month, y = new_vaccinations)) +
+  geom_point(color="green") +                    
+  geom_line(color="green") +                      
+  labs(x = "Mes-Año", y = "Vacunaciones por mes",
+       title="Evolución mensual de vacunaciones") +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+Vemos algo similar a antes. Una vez surgieron las primeras vacunas estables, el número de dosis suministradas alcanza un pico enorme en 2022. A raíz de esto la mayoría de la población está vacunada y por tanto baja el número de dosis diarias. Esto coincide con el inicio de la caída de los contagios. Una vez la gente se vacuna, los contagios se vuelven menos frecuentes y el impacto de la pandemia es cada vez menor.
+
+#### Comparación contagios y vacunaciones
+
+Hagamos un gráfico nuevo similar al de comparación con el número de personas vacunadas.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=6}
+# Unir ambas series en un solo dataframe
+datos_combinados_vacunaciones <- datos_agrupados_contagios_mes %>%  left_join(datos_agrupados_vacunaciones_mes, by = "year_month")
+
+# Crear el gráfico con dos ejes Y
+ggplot(datos_combinados_vacunaciones, aes(x = year_month)) +
+  geom_point(aes(y = new_cases, color = "Nuevos Casos")) +
+  geom_line(aes(y = new_cases, color = "Nuevos Casos")) +
+  geom_point(aes(y = new_vaccinations/5 , color = "Vacunaciones")) +  # Ajuste de escala para ver mejor subidas y bajadas
+  geom_line(aes(y = new_vaccinations/5 , color = "Vacunaciones")) +
+  labs(
+    x = "Mes-Año",
+    y = "Casos Nuevos",
+    color = "Variables",
+    title="Comparación temporal de contagios y vacunaciones"
+  ) +
+  scale_color_manual(values = c("Nuevos Casos" = "red", "Vacunaciones" = "green")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(
+    name = "Casos Nuevos",
+    sec.axis = sec_axis(~ . * 1000, name = "Vacunaciones")  # Eje secundario para vacunaciones
+  )
+```
+
+Vemos lo que comentamos intuitivamente. El pico de las vacunaciones coincide con el comienzo de la bajada de los contagios. Las vacunas fueron clave para parar la pandemia, sobre todo para parar el aumento del número de muertes que si recordamos era muy alto hasta 2022 donde comenzaba a bajar.
+
+#### Comparación muertes y vacunaciones
+Veamos si se cumple lo que acabamos de decir.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=6}
+# Unir ambas series en un solo dataframe
+datos_combinados_muertes <- datos_agrupados_muertes_mes %>%  left_join(datos_agrupados_vacunaciones_mes, by = "year_month")
+
+# Crear el gráfico con dos ejes Y
+ggplot(datos_combinados_muertes, aes(x = year_month)) +
+  geom_point(aes(y = new_deaths, color = "Nuevas Muertes")) +
+  geom_line(aes(y = new_deaths, color = "Nuevas Muertes")) +
+  geom_point(aes(y = new_vaccinations/1000 , color = "Vacunaciones")) +  # Ajuste de escala para ver mejor subidas y bajadas
+  geom_line(aes(y = new_vaccinations/1000 , color = "Vacunaciones")) +
+  labs(
+    x = "Mes-Año",
+    y = "Nuevas Muertes",
+    color = "Variables",
+    title="Comparación temporal de muertes y vacunaciones"
+  ) +
+  scale_color_manual(values = c("Nuevas Muertes" = "blue", "Vacunaciones" = "green")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(
+    name = "Nuevas Muertes",
+    sec.axis = sec_axis(~ . * 1000, name = "Vacunaciones")  # Eje secundario para vacunaciones
+  )
+```
+
+Aquí el efecto de las vacunas parece aún mayor y tiene sentido. Las muertes estuvieron creciendo hasta el gran pico de las vacunas. Una vez la mayoría de la población está vacunada disminuyen los contagios, pero además la enfermedad se vuelve más débil al tener los anticuerpos necesarios para combatirla eficazmente. Esto provoca que el número de muertes baje de forma clara convirtiendo al COVID en una enfermedad contagiosa pero menos letal que al principio. 
+
+Nótese antes de seguir que en los gráficos comparativos hemos tenido que modificar la escala del eje $Y$ de los datos para poder ver bien las subidas y bajadas y ver la posible relación entre las variables. En estos gráficos no es tan relevante el valor absoluto de las vacunaciones sino cuándo se producen esos picos.
+
+#### Tasa de reproducción
+
+Veamos un último gráfico temporal en relación con la variable reproduction_rate. Como dijimos antes esta tasa indica el número promedio de personas a las que cada persona infectada transmite el virus. Una tasa de reproducción superior a 1 sugiere que la pandemia está en expansión, mientras que una tasa por debajo de 1 indica que la propagación está disminuyendo. Para realizar una agrupación mensual y tener en cuenta a todos los países se tomara la media o la mediana por mes de dicha variable. La elección de cuál tomar dependerá de la dispersión de los datos. Si hay mucha variabilidad en los datos será mejor tomar la mediana. En cambio si los datos no son muy dispersos se tomará la media como medida a representar.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+datos_agrupados_reproduction_rate_mes <- datos %>%
+  mutate(date = as.Date(date),
+         year_month = floor_date(date, "month")) %>%
+  filter(!is.na(reproduction_rate)) %>%
+  group_by(year_month) %>%
+  summarise(media_r = mean(reproduction_rate, na.rm = TRUE),
+            sd_r = sd(reproduction_rate,na.rm=TRUE),
+            mediana_r = median(reproduction_rate, na.rm=TRUE))
+print(datos_agrupados_reproduction_rate_mes, n = Inf)
+```
+
+Vemos que en general la desviación típica es alta respecto a la media. Para tomar una medida más robusta que no esté influenciada por valores extremos usaremos la mediana.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Usamos la mediana como valor mensual de la tasa
+
+ggplot(datos_agrupados_reproduction_rate_mes, aes(x = year_month, y = mediana_r)) +
+  geom_line(color = "#d73027", linewidth = 1.2) +
+  geom_point(color = "#f46d43", size = 2) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+  labs(
+    title = "Evolución mensual de la tasa de reproducción mediana",
+    x = "Mes-Año",
+    y = "Tasa de reproducción"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+Se observa un patron coherente. Comenzamos con una alta propagación de la enfermedad. Con el confinamiento, la tasa de reproducción de la enfermedad fluctúa en torno a 1. Sin embargo, una vez acaba el confinamiento, hay subidas de la tasa. Cuando se consolidan las vacunas del covid y estas empiezan a hacer efecto (en torno a 2022) se produce una bajada clara de la tasa de reproducción mediana mensual por debajo de 1 como indicio de que la propagación ya es cada vez más baja.
